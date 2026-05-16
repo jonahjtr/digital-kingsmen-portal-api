@@ -1,0 +1,157 @@
+openapi: 3.1.0
+info:
+  title: Digital Kingsmen Portal API
+  version: 1.0.0
+  description: Client/team portal API for project visibility, messaging, files, and approvals.
+servers:
+  - url: http://localhost:3003/api
+    description: Local development
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data: {}
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+paths:
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  example: admin@digitalkingsmen.com
+                password:
+                  type: string
+                  example: Demo123!
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                      expiresIn:
+                        type: integer
+                      user:
+                        type: object
+  /auth/register:
+    post:
+      summary: Register with invite token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, full_name, invite_token]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+                full_name:
+                  type: string
+                invite_token:
+                  type: string
+  /auth/me:
+    get:
+      summary: Current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+  /projects:
+    get:
+      summary: List projects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+    post:
+      summary: Create project
+      security:
+        - bearerAuth: []
+  /projects/{id}:
+    get:
+      summary: Get project
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /files/upload:
+    post:
+      summary: Upload file
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                project_id:
+                  type: string
+  /dashboard/client:
+    get:
+      summary: Client dashboard
+      security:
+        - bearerAuth: []

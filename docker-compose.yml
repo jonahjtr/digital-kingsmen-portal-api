@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: digital_kingsmen_portal
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - '3003:3003'
+    environment:
+      PORT: 3003
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/digital_kingsmen_portal
+      JWT_SECRET: dev-jwt-secret-change-in-production-min-16-chars
+      JWT_EXPIRES_IN: 7d
+      CORS_ORIGIN: http://localhost:5173
+      STORAGE_DRIVER: local
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
