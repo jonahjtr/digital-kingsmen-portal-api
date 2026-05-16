@@ -71,7 +71,49 @@ All seeded users share password: `Demo123!`
 | `npm run db:studio` | Prisma Studio |
 | `npm test` | Run Vitest tests |
 
-## Docker
+## Deploy to Render.com
+
+Your deploy failed because **`DATABASE_URL` was not set**. The API cannot start without it.
+
+### Fix an existing Web Service (fastest)
+
+1. In Render, click **New → Postgres** (free) — name it e.g. `dk-portal-db`.
+2. Wait until the database is **Available**.
+3. Open your **Web Service** → **Environment** → **Add Environment Variable**:
+   | Key | Value |
+   |-----|--------|
+   | `DATABASE_URL` | Copy **Internal Database URL** from the Postgres service |
+   | `JWT_SECRET` | Random string (32+ chars), e.g. `openssl rand -base64 32` |
+   | `NODE_ENV` | `production` |
+   | `CORS_ORIGIN` | Your Lovable app URL |
+   | `STORAGE_DRIVER` | `local` |
+   | `UPLOAD_DIR` | `/tmp/uploads` |
+4. **Save Changes** — Render will redeploy automatically.
+5. After a successful deploy, open **Shell** on the web service and run:
+   ```bash
+   npm run db:seed
+   ```
+   (Or run seed locally with the **External** Database URL once.)
+
+**Health check:** `https://digital-kingsmen-portal-api.onrender.com/health`  
+**API base:** `https://digital-kingsmen-portal-api.onrender.com/api`
+
+### Deploy from Blueprint (new project)
+
+1. Push this repo to GitHub.
+2. Render → **New → Blueprint** → connect repo.
+3. Uses [`render.yaml`](render.yaml) (Web Service + Postgres + env wiring).
+4. Edit `CORS_ORIGIN` in `render.yaml` to your real frontend URL before deploying.
+5. Seed the database once after first successful deploy.
+
+### Service type
+
+Use **Web Services** (not Static Sites). Runtime: **Docker** (uses root `Dockerfile`) or native Node with:
+
+- **Build:** `npm install && npx prisma generate && npm run build`
+- **Start:** `npx prisma migrate deploy && npm start`
+
+## Docker (local)
 
 ```bash
 docker compose up --build
@@ -136,7 +178,7 @@ List endpoints support: `?page=1&limit=20&search=&status=&sortBy=createdAt&sortO
 
 ## Connecting from Lovable (React)
 
-1. Set API base URL: `http://localhost:3003/api` (or your `PORT` from `.env`).
+1. Set API base URL: `https://digital-kingsmen-portal-api.onrender.com/api` (prod) or `http://localhost:3003/api` (local).
 2. On login, store `data.accessToken` from `POST /auth/login`.
 3. Attach to every request:
 
