@@ -4,6 +4,7 @@ import { corsOrigins } from './config/env';
 import apiRoutes from './routes';
 import { errorHandler } from './middleware/errorHandler';
 import { workersBodyParser } from './middleware/bodyParser';
+import { prismaRequestMiddleware } from './middleware/prismaRequest';
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -38,6 +39,7 @@ export function createApp() {
     }),
   );
   app.use(workersBodyParser());
+  app.use(prismaRequestMiddleware);
 
   app.get('/', (_req, res) => {
     res.json({ message: 'Digital Kingsmen Portal API', docs: '/api/docs' });

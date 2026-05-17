@@ -7,6 +7,8 @@ compatibility_flags = [
   "nodejs_compat_populate_process_env",
   "enable_nodejs_http_modules",
   "enable_nodejs_http_server_modules",
+  # Prisma D1 DataLoader + Express on Workers: avoid cross-request promise cancellation
+  "no_handle_cross_request_promise_resolution",
 ]
 
 [observability]
