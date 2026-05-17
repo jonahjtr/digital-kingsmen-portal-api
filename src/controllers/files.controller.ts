@@ -6,8 +6,6 @@ import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject, assertCanAccessCompany } from '../permissions/access';
 import { projectWhereForUser, companyWhereForUser } from '../permissions/filters';
 import { getStorageProvider } from '../storage';
-import { LocalStorageProvider } from '../storage/local.provider';
-import fs from 'fs';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -124,14 +122,17 @@ export async function download(req: Request, res: Response, next: NextFunction) 
     else if (file.uploadedBy !== req.user!.id && req.user!.role !== 'admin') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
-    const storage = getStorageProvider() as LocalStorageProvider;
-    const filePath = storage.getPath(file.fileUrl);
-    if (!fs.existsSync(filePath)) {
+    const storage = getStorageProvider();
+    if (!storage.get) {
+      throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Storage provider does not support downloads', 500);
+    }
+    const object = await storage.get(file.fileUrl);
+    if (!object) {
       throw new AppError(ErrorCodes.NOT_FOUND, 'File content not found', 404);
     }
     res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
-    if (file.fileType) res.setHeader('Content-Type', file.fileType);
-    return res.sendFile(filePath);
+    res.setHeader('Content-Type', object.mimeType || file.fileType || 'application/octet-stream');
+    return res.send(Buffer.from(object.body));
   } catch (err) {
     next(err);
   }

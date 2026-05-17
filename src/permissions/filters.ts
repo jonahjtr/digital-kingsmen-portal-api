@@ -65,6 +65,9 @@ export async function projectWhereForUser(user: User): Promise<Prisma.ProjectWhe
   return { id: 'never' };
 }
 
+/** Excludes archived tasks from boards and default listings. */
+export const activeTaskWhere: Prisma.TaskWhereInput = { archivedAt: null };
+
 export async function taskWhereForUser(user: User): Promise<Prisma.TaskWhereInput> {
   const projectWhere = await projectWhereForUser(user);
   if (user.role === 'admin') return {};

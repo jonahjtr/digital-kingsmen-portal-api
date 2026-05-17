@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -317,6 +317,7 @@ model Task {
   priority         Priority   @default(normal)
   dueDate          DateTime?  @map("due_date")
   clientVisible    Boolean    @default(false) @map("client_visible")
+  archivedAt       DateTime?  @map("archived_at")
   createdBy        String     @map("created_by")
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
@@ -563,6 +564,7 @@ model Invite {
   token     String    @unique
   email     String
   role      UserRole
+  reusable  Boolean   @default(false)
   companyId String?   @map("company_id")
   expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")

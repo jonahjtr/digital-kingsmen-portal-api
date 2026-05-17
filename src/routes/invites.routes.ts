@@ -7,6 +7,8 @@ import { createInviteSchema } from '../validators/misc';
 const router = Router();
 router.use(authenticate);
 
+router.get('/email-status', invitesController.emailStatus);
+router.get('/registration-tokens', invitesController.registrationTokens);
 router.get('/', invitesController.list);
 router.post('/', validate(createInviteSchema), invitesController.create);
 

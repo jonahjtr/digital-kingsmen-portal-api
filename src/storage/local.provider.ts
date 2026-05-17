@@ -36,4 +36,14 @@ export class LocalStorageProvider implements StorageProvider {
   getPath(key: string): string {
     return path.join(this.baseDir, key);
   }
+
+  async get(key: string): Promise<{ body: ArrayBuffer; mimeType?: string } | null> {
+    const fullPath = this.getPath(key);
+    try {
+      const buffer = await fs.readFile(fullPath);
+      return { body: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) };
+    } catch {
+      return null;
+    }
+  }
 }

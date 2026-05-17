@@ -15,7 +15,15 @@ export const createTaskSchema = z.object({
   client_visible: z.boolean().optional(),
 });
 
-export const updateTaskSchema = createTaskSchema.partial().omit({ project_id: true });
+export const updateTaskSchema = createTaskSchema
+  .partial()
+  .omit({ project_id: true })
+  .extend({
+    description: z.string().nullable().optional(),
+    due_date: z.string().datetime().nullable().optional(),
+    assigned_to: z.string().uuid().nullable().optional(),
+    archived: z.boolean().optional(),
+  });
 
 export const createTaskCommentSchema = z.object({
   comment: z.string().min(1),

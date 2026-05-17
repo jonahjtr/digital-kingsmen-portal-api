@@ -1,0 +1,37 @@
+name = "digital-kingsmen-portal-api"
+main = "src/worker.ts"
+workers_dev = true
+compatibility_date = "2025-04-01"
+compatibility_flags = [
+  "nodejs_compat",
+  "nodejs_compat_populate_process_env",
+  "enable_nodejs_http_modules",
+  "enable_nodejs_http_server_modules",
+]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portal-db"
+database_id = "1b418e58-1293-43b9-9706-27a023a6eeef"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "portal-uploads"
+
+[vars]
+JWT_EXPIRES_IN = "7d"
+CORS_ORIGIN = "http://localhost:5173,http://localhost:8787"
+NUDGE_COOLDOWN_MINUTES = "240"
+STORAGE_DRIVER = "r2"
+
+# Set secrets via: wrangler secret put JWT_SECRET
+
+[dev]
+port = 8787
+
+[alias]
+iconv-lite = "./src/shims/iconv-lite.ts"

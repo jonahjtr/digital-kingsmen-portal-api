@@ -21,6 +21,20 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       503,
     );
   }
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    console.error('Prisma error:', err.code, err.message);
+    if (err.code === 'P2022') {
+      return error(
+        res,
+        ErrorCodes.INTERNAL_ERROR,
+        'Database schema is out of date. Run migrations (npm run cf:migrate:remote) and redeploy the API.',
+        503,
+      );
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      return error(res, ErrorCodes.INTERNAL_ERROR, err.message, 500);
+    }
+  }
   console.error(err);
   return error(res, ErrorCodes.INTERNAL_ERROR, 'An unexpected error occurred', 500);
 }

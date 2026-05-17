@@ -1,5 +1,4 @@
 import {
-  PrismaClient,
   UserRole,
   ProjectStatus,
   StepStatus,
@@ -7,13 +6,25 @@ import {
   ApprovalStatus,
   ConversationType,
 } from '@prisma/client';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
+import { bootstrap } from '../src/bootstrap';
+import { getPrisma } from '../src/lib/prisma';
+import { ensureRegistrationTokens } from '../src/services/invite.service';
 
-const prisma = new PrismaClient();
 const DEMO_PASSWORD = 'Demo123!';
 
 async function main() {
   console.log('Seeding database...');
+
+  if (process.env.CF_SEED === '1') {
+    const { getPlatformProxy } = await import('wrangler');
+    const { env } = await getPlatformProxy({ configPath: './wrangler.toml' });
+    await bootstrap({ DB: env.DB, R2: (env as { R2?: R2Bucket }).R2 });
+  } else {
+    await bootstrap();
+  }
+
+  const prisma = getPrisma();
 
   await prisma.nudge.deleteMany();
   await prisma.message.deleteMany();
@@ -226,32 +237,36 @@ async function main() {
       },
     });
 
-    const project = await prisma.project.create({
-      data: {
-        companyId: company.id,
-        name: `${co.name} - Digital Growth`,
-        description: `Full digital marketing engagement for ${co.name}`,
-        status: ProjectStatus.in_progress,
-        priority: 'normal',
-        startDate: new Date('2025-01-15'),
-        dueDate: new Date('2025-08-01'),
-        assignedSalesmanId: salesman.id,
-        projectManagerId: pm.id,
-        clientFacingNotes: 'We are making great progress on your project!',
-        internalNotes: 'High priority client - keep PM updated weekly.',
-      },
-    });
+    let primaryProjectId: string | null = null;
 
-    await prisma.projectTeamMember.createMany({
-      data: [
-        { projectId: project.id, userId: pm.id, roleOnProject: 'project_manager' },
-        { projectId: project.id, userId: employee.id, roleOnProject: 'designer' },
-        { projectId: project.id, userId: salesman.id, roleOnProject: 'salesman' },
-      ],
-    });
-
-    let totalProgress = 0;
     for (const svc of co.services) {
+      const project = await prisma.project.create({
+        data: {
+          companyId: company.id,
+          name: `${co.name} — ${svc.name}`,
+          description: `${svc.name} engagement for ${co.name}`,
+          status: ProjectStatus.in_progress,
+          priority: 'normal',
+          startDate: new Date('2025-01-15'),
+          dueDate: new Date('2025-08-01'),
+          assignedSalesmanId: salesman.id,
+          projectManagerId: pm.id,
+          overallProgress: svc.progress,
+          clientFacingNotes: 'We are making great progress on your project!',
+          internalNotes: 'High priority client - keep PM updated weekly.',
+        },
+      });
+
+      if (!primaryProjectId) primaryProjectId = project.id;
+
+      await prisma.projectTeamMember.createMany({
+        data: [
+          { projectId: project.id, userId: pm.id, roleOnProject: 'project_manager' },
+          { projectId: project.id, userId: employee.id, roleOnProject: 'designer' },
+          { projectId: project.id, userId: salesman.id, roleOnProject: 'salesman' },
+        ],
+      });
+
       const projectService = await prisma.projectService.create({
         data: {
           projectId: project.id,
@@ -262,7 +277,6 @@ async function main() {
           status: ProjectStatus.in_progress,
         },
       });
-      totalProgress += svc.progress;
 
       const stepCount = 4;
       const completedSteps = Math.round((svc.progress / 100) * stepCount);
@@ -279,10 +293,7 @@ async function main() {
       }
     }
 
-    await prisma.project.update({
-      where: { id: project.id },
-      data: { overallProgress: Math.round(totalProgress / co.services.length) },
-    });
+    const project = { id: primaryProjectId! };
 
     for (let i = 0; i < updates.length; i++) {
       await prisma.projectUpdate.create({
@@ -373,23 +384,16 @@ async function main() {
     },
   });
 
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 30);
-
-  await prisma.invite.create({
-    data: {
-      token: 'demo-invite-token-for-new-client',
-      email: 'newclient@example.com',
-      role: UserRole.client,
-      expiresAt,
-      createdBy: admin.id,
-    },
-  });
+  await ensureRegistrationTokens(admin.id);
 
   console.log('Seed completed.');
   console.log('Demo password for all users:', DEMO_PASSWORD);
   console.log('Admin:', admin.email);
-  console.log('Unused invite token: demo-invite-token-for-new-client');
+  console.log('Reusable registration tokens (any email at /register):');
+  console.log('  Client:    dk-register-client');
+  console.log('  Team:      dk-register-employee');
+  console.log('  Sales:     dk-register-salesman');
+  console.log('  Admin:     dk-register-admin');
 }
 
 main()
@@ -397,4 +401,4 @@ main()
     console.error(e);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(() => getPrisma().$disconnect());

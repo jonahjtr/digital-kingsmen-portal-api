@@ -1,229 +1,148 @@
 # Digital Kingsmen Portal API
 
-REST API backend for the Digital Kingsmen client/team portal. Powers project visibility, service progress, messaging, file sharing, approvals, and role-based dashboards.
+REST API for the Digital Kingsmen client portal. Runs on **Cloudflare Workers** with **D1** (database) and **R2** (file storage).
 
 ## Stack
 
-- Node.js + Express + TypeScript
-- PostgreSQL + Prisma ORM
-- JWT Bearer authentication
-- Zod validation
-- Local file storage (S3-ready abstraction)
-- OpenAPI docs at `/api/docs`
+- Express.js on Cloudflare Workers (`nodejs_compat`)
+- **D1** — SQLite at the edge (replaces PostgreSQL)
+- **R2** — object storage for uploads (replaces local disk)
+- Prisma ORM + `@prisma/adapter-d1`
+- JWT Bearer auth, Zod validation, role-based permissions
 
-## Quick start
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 20+
-- PostgreSQL 16+ (or Docker)
+- Cloudflare account ([wrangler login](https://developers.cloudflare.com/workers/wrangler/commands/#login))
+- Wrangler CLI (included as dev dependency)
 
-### Setup
+## Quick start (Cloudflare-native)
 
 ```bash
 npm install
-cp .env.example .env
-# Edit DATABASE_URL and JWT_SECRET in .env
-#
-# Homebrew PostgreSQL (macOS): use your macOS username, e.g.
-#   DATABASE_URL=postgresql://adam@localhost:5432/digital_kingsmen_portal
-# Docker: use postgres/postgres (see docker-compose.yml)
+cp .dev.vars.example .dev.vars
+# Edit .dev.vars — set JWT_SECRET (min 16 chars)
 
-# Start PostgreSQL (Docker — optional)
-docker compose up -d postgres
+# Apply D1 schema + seed demo data (local D1)
+npm run cf:setup:local
 
-# Run migrations and seed
-npm run db:migrate
-npm run db:seed
-
-# Start dev server
+# Start API (http://localhost:8787)
 npm run dev
 ```
 
-API base URL: `http://localhost:3003/api` (or whatever `PORT` is in `.env`, range 3001–3005)  
-Swagger UI: `http://localhost:3003/api/docs`
+**API base URL:** `http://localhost:8787/api`  
+**Swagger:** `http://localhost:8787/api/docs`
 
-## Demo credentials
+### Demo login
 
-All seeded users share password: `Demo123!`
+Password for all seeded users: `Demo123!`
 
 | Email | Role |
 |-------|------|
 | admin@digitalkingsmen.com | admin |
-| pm@digitalkingsmen.com | employee (PM) |
+| client-pure@example.com | client |
 | salesman@digitalkingsmen.com | salesman |
-| employee@digitalkingsmen.com | employee |
-| client-pure@example.com | client (Pure Heating) |
-| client-four@example.com | client (Four Seasons) |
-| client-clean@example.com | client (Clean Slate) |
 
-**Invite token (unused):** `demo-invite-token-for-new-client` for `newclient@example.com`
+```bash
+curl -X POST http://localhost:8787/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@digitalkingsmen.com","password":"Demo123!"}'
+```
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Dev server with hot reload |
-| `npm run build` | Compile TypeScript |
-| `npm start` | Run production build |
-| `npm run db:migrate` | Create/apply migrations |
-| `npm run db:seed` | Seed demo data |
-| `npm run db:studio` | Prisma Studio |
-| `npm test` | Run Vitest tests |
+| `npm run dev` | Wrangler dev (D1 + local uploads) |
+| `npm run dev:node` | Node-only dev with SQLite file (`prisma/dev.db`) |
+| `npm run deploy` | Deploy Worker to Cloudflare |
+| `npm run cf:migrate:local` | Apply D1 migrations (local) |
+| `npm run cf:migrate:remote` | Apply D1 migrations (production D1) |
+| `npm run cf:setup:local` | Migrate + seed local D1 |
+| `npm run db:seed:cf` | Seed via Wrangler D1 binding |
+| `npm run cf:types` | Generate Worker binding types |
 
-## Deploy to Render.com
+## Deploy to production
 
-Your deploy failed because **`DATABASE_URL` was not set**. The API cannot start without it.
+### Already done (automated)
 
-### Fix an existing Web Service (fastest)
+- Remote D1 migrations applied (`0001_init.sql`)
+- Worker bundle uploaded to Cloudflare
+- `JWT_SECRET` secret set on the Worker (rotate before real traffic — see below)
 
-1. In Render, click **New → Postgres** (free) — name it e.g. `dk-portal-db`.
-2. Wait until the database is **Available**.
-3. Open your **Web Service** → **Environment** → **Add Environment Variable**:
-   | Key | Value |
-   |-----|--------|
-   | `DATABASE_URL` | Copy **Internal Database URL** from the Postgres service |
-   | `JWT_SECRET` | Random string (32+ chars), e.g. `openssl rand -base64 32` |
-   | `NODE_ENV` | `production` |
-   | `CORS_ORIGIN` | Your Lovable app URL |
-   | `STORAGE_DRIVER` | `local` |
-   | `UPLOAD_DIR` | `/tmp/uploads` |
-4. **Save Changes** — Render will redeploy automatically.
-5. After a successful deploy, open **Shell** on the web service and run:
+### You must do (one-time)
+
+1. **Register a `workers.dev` subdomain** (required before the API is reachable):
+   - Open [Workers onboarding](https://dash.cloudflare.com/cca5a114f4b3baf1459a9b2697cad2e1/workers/onboarding)
+   - Pick a subdomain (e.g. `digitalkingsmen`)
+2. **Finish deploy** from the project root:
    ```bash
-   npm run db:seed
+   npm run deploy
    ```
-   (Or run seed locally with the **External** Database URL once.)
+3. **Set a production JWT secret** (replace the dev value currently uploaded):
+   ```bash
+   npx wrangler secret put JWT_SECRET
+   ```
+4. **Seed demo data on remote D1** (optional):
+   ```bash
+   npm run cf:setup:local   # only if you need local again
+   CF_SEED=1 npm run db:seed:cf   # seeds *local* D1
+   ```
+   For remote seed after deploy, use Dashboard → D1 → `portal-db` → import, or run seed SQL via `wrangler d1 execute portal-db --remote`.
+5. **Update CORS** in [wrangler.toml](wrangler.toml) `CORS_ORIGIN` with your frontend URL(s), then `npm run deploy` again.
 
-**Health check:** `https://digital-kingsmen-portal-api.onrender.com/health`  
-**API base:** `https://digital-kingsmen-portal-api.onrender.com/api`
+Your API will be at `https://digital-kingsmen-portal-api.<your-subdomain>.workers.dev`
 
-### Deploy from Blueprint (new project)
+### Custom domain
 
-1. Push this repo to GitHub.
-2. Render → **New → Blueprint** → connect repo.
-3. Uses [`render.yaml`](render.yaml) (Web Service + Postgres + env wiring).
-4. Edit `CORS_ORIGIN` in `render.yaml` to your real frontend URL before deploying.
-5. Seed the database once after first successful deploy.
+Cloudflare Dashboard → Workers → your worker → Custom Domains → add `api.yourdomain.com`
 
-### Service type
+## Enable R2 for production uploads
 
-Use **Web Services** (not Static Sites). Runtime: **Docker** (uses root `Dockerfile`) or native Node with:
+1. Enable R2 in [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. `npx wrangler r2 bucket create portal-uploads`
+3. Uncomment `[[r2_buckets]]` in [wrangler.toml](wrangler.toml)
+4. Set `STORAGE_DRIVER = "r2"` under `[vars]`
+5. Redeploy
 
-- **Build:** `npm install && npx prisma generate && npm run build`
-- **Start:** `npx prisma migrate deploy && npm start`
+Until R2 is enabled, uploads are stored in memory inside the Worker (fine for local dev; not durable across requests or deploys).
 
-## Docker (local)
+## Lovable / React frontend
+
+1. Base URL: `https://<your-worker>.workers.dev/api` or custom domain
+2. Login → store `data.accessToken`
+3. Header: `Authorization: Bearer <token>`
+4. Handle `{ success: false, error: { code, message } }`
+
+## Local Node dev (optional)
+
+For debugging without Wrangler:
 
 ```bash
-docker compose up --build
+cp .env.example .env
+npm run db:push
+npm run db:seed
+npm run dev:node
 ```
 
-Runs PostgreSQL + API (default port 3003).
-
-## API overview
-
-### Authentication
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{ "email": "admin@digitalkingsmen.com", "password": "Demo123!" }
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "<jwt>",
-    "expiresIn": 604800,
-    "user": { "id": "...", "email": "...", "role": "admin" }
-  }
-}
-```
-
-Use header on all protected routes:
-
-```http
-Authorization: Bearer <accessToken>
-```
-
-### Main endpoints
-
-| Area | Endpoints |
-|------|-----------|
-| Auth | `POST /auth/register`, `/login`, `/logout`, `GET /me` |
-| Users | `GET/POST/PATCH/DELETE /users` (admin) |
-| Companies | `GET/POST/PATCH/DELETE /companies` |
-| Projects | `GET/POST/PATCH/DELETE /projects`, `/dashboard`, `/progress`, `/nudge` |
-| Services | `/projects/:id/services`, `/project-services/:id` |
-| Steps | `/project-services/:id/steps`, `/service-steps/:id` |
-| Tasks | `/tasks`, `/tasks/:id/comments` |
-| Updates | `/projects/:id/updates`, `/project-updates/:id` |
-| Messages | `/conversations`, `/conversations/:id/messages` |
-| Files | `/files`, `POST /files/upload`, `/files/:id/download` |
-| Approvals | `/approvals`, `/approve`, `/request-revision` |
-| Requests | `/client-requests`, `/convert-to-task` |
-| Reports | `/reports` |
-| Notifications | `/notifications`, `/read-all` |
-| Announcements | `/announcements` |
-| Dashboards | `/dashboard/admin`, `/client`, `/salesman`, `/employee` |
-| Invites | `POST /invites` (admin) |
-| Internal notes | `GET/POST /internal-notes` (not for clients) |
-
-List endpoints support: `?page=1&limit=20&search=&status=&sortBy=createdAt&sortOrder=desc`
-
-## Connecting from Lovable (React)
-
-1. Set API base URL: `https://digital-kingsmen-portal-api.onrender.com/api` (prod) or `http://localhost:3003/api` (local).
-2. On login, store `data.accessToken` from `POST /auth/login`.
-3. Attach to every request:
-
-```typescript
-const res = await fetch(`${API_URL}/projects`, {
-  headers: {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  },
-});
-const json = await res.json();
-if (!json.success) {
-  throw new Error(json.error.message);
-}
-```
-
-4. Use `GET /auth/me` for user role and company memberships (do not trust JWT payload alone for UI).
-5. Registration: admin creates invite via `POST /api/invites`, user registers with `invite_token` from URL.
-6. File uploads: `multipart/form-data` to `POST /api/files/upload` with field name `file`.
-
-## Security
-
-All permissions are enforced server-side by role:
-
-- **admin** — full access
-- **client** — own company/projects only; no internal notes/messages/updates
-- **salesman** — assigned companies/projects
-- **employee** — assigned projects/tasks
+Uses `file:./prisma/dev.db` instead of D1.
 
 ## Project structure
 
 ```
 src/
-  config/       # Environment
-  controllers/  # Route handlers
-  middleware/   # Auth, validation, errors
-  permissions/  # Access control
-  routes/       # Express routers
-  services/     # Business logic
-  storage/      # File storage providers
-  validators/   # Zod schemas
-prisma/         # Schema, migrations, seed
-tests/          # Vitest + Supertest
+  worker.ts          # Cloudflare Workers entry (production)
+  index.ts           # Node entry (optional local dev)
+  bootstrap.ts       # Init D1 Prisma + storage
+  routes/ controllers/ services/ permissions/
+migrations/          # D1 SQL migrations
+prisma/
+  schema.prisma      # sqlite provider
+  seed.ts
+wrangler.toml        # D1, vars, deploy config
 ```
 
-## Future integrations
+## Notes
 
-See `src/integrations/ghl/` for GoHighLevel placeholder.
+- D1 does not support transactions yet; Prisma runs queries individually.
+- PostgreSQL migrations in `prisma/migrations/` are archived; use `migrations/` for D1.

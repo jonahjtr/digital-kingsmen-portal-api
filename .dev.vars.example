@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `wrangler dev` (not committed)
+JWT_SECRET=dev-jwt-secret-change-in-production-min-16-chars
+
+# Optional — invite emails via Resend
+RESEND_API_KEY=
+EMAIL_FROM=Digital Kingsmen <onboarding@resend.dev>
+APP_URL=http://localhost:5173

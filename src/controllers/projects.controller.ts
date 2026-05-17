@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
 import {
+  assertCanAccessCompany,
   assertCanAccessProject,
   assertNotClient,
   getProjectIfAccessible,
@@ -32,10 +33,14 @@ function mapProjectBody(body: Record<string, unknown>) {
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, search, status, sortBy, sortOrder } = parsePagination(req.query);
+    const { page, limit, skip, search, status, sortBy, sortOrder, companyId } = parsePagination(
+      req.query,
+    );
+    if (companyId) await assertCanAccessCompany(req.user!, companyId);
     const scope = await projectWhereForUser(req.user!);
     const where = {
       ...scope,
+      ...(companyId ? { companyId } : {}),
       ...(status ? { status: status as never } : {}),
       ...(search ? { name: { contains: search, mode: 'insensitive' as const } } : {}),
     };
@@ -135,6 +140,7 @@ export async function dashboard(req: Request, res: Response, next: NextFunction)
       prisma.task.findMany({
         where: {
           projectId: project.id,
+          archivedAt: null,
           ...(req.user!.role === 'client' ? { clientVisible: true } : {}),
         },
         orderBy: { dueDate: 'asc' },

@@ -5,6 +5,7 @@ export const createInviteSchema = z.object({
   role: z.enum(['admin', 'client', 'salesman', 'employee']),
   company_id: z.string().uuid().optional(),
   expires_in_days: z.number().int().min(1).max(90).optional().default(7),
+  send_email: z.coerce.boolean().optional().default(false),
 });
 
 export const createConversationSchema = z.object({

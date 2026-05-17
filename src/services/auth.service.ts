@@ -1,10 +1,14 @@
-import crypto from 'crypto';
 import { User } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { hashPassword, comparePassword } from '../lib/password';
 import { signToken, getExpiresInSeconds } from '../lib/jwt';
 import { sanitizeUser } from '../lib/sanitize';
 import { AppError, ErrorCodes } from '../lib/errors';
+import {
+  consumeInvite,
+  inviteEmailMatches,
+  requireValidInvite,
+} from './invite.service';
 
 export async function register(data: {
   email: string;
@@ -12,15 +16,9 @@ export async function register(data: {
   full_name: string;
   invite_token: string;
 }) {
-  const invite = await prisma.invite.findUnique({
-    where: { token: data.invite_token },
-  });
+  const invite = await requireValidInvite(data.invite_token.trim());
 
-  if (!invite || invite.usedAt || invite.expiresAt < new Date()) {
-    throw new AppError(ErrorCodes.INVALID_INVITE, 'Invalid or expired invite token', 400);
-  }
-
-  if (invite.email.toLowerCase() !== data.email.toLowerCase()) {
+  if (!inviteEmailMatches(invite, data.email)) {
     throw new AppError(ErrorCodes.INVALID_INVITE, 'Email does not match invite', 400);
   }
 
@@ -49,10 +47,7 @@ export async function register(data: {
     });
   }
 
-  await prisma.invite.update({
-    where: { id: invite.id },
-    data: { usedAt: new Date() },
-  });
+  await consumeInvite(invite);
 
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
   return {
@@ -101,5 +96,7 @@ export async function getMe(userId: string) {
 }
 
 export function createInviteToken(): string {
-  return crypto.randomBytes(32).toString('hex');
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

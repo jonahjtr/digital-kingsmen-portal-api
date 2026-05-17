@@ -1,23 +1,43 @@
 import express from 'express';
 import cors from 'cors';
-import path from 'path';
-import swaggerUi from 'swagger-ui-express';
-import YAML from 'yamljs';
 import { corsOrigins } from './config/env';
 import apiRoutes from './routes';
 import { errorHandler } from './middleware/errorHandler';
+import { workersBodyParser } from './middleware/bodyParser';
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (corsOrigins.includes(origin)) return true;
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname.endsWith('.lovable.app') ||
+      hostname.endsWith('.lovableproject.com') ||
+      hostname.endsWith('.lovable.dev') ||
+      hostname.endsWith('.pages.dev') ||
+      hostname.endsWith('.workers.dev')
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function createApp() {
   const app = express();
 
   app.use(
     cors({
-      origin: corsOrigins,
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) {
+          callback(null, origin ?? true);
+        } else {
+          callback(null, false);
+        }
+      },
       credentials: true,
     }),
   );
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(workersBodyParser());
 
   app.get('/', (_req, res) => {
     res.json({ message: 'Digital Kingsmen Portal API', docs: '/api/docs' });
@@ -26,14 +46,6 @@ export function createApp() {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
-
-  try {
-    const openApiPath = path.join(process.cwd(), 'openapi.yaml');
-    const swaggerDocument = YAML.load(openApiPath);
-    app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-  } catch {
-    // OpenAPI file optional during early setup
-  }
 
   app.use('/api', apiRoutes);
   app.use(errorHandler);

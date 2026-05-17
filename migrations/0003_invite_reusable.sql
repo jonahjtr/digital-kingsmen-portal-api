@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "invites" ADD COLUMN "reusable" INTEGER NOT NULL DEFAULT 0;

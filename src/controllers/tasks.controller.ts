@@ -1,21 +1,35 @@
+import { Prisma } from '@prisma/client';
 import { Request, Response, NextFunction } from 'express';
 import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
 import {
+  assertCanAccessCompany,
   assertCanAccessProject,
   assertCanModifyTask,
   assertNotClient,
 } from '../permissions/access';
-import { taskWhereForUser, taskCommentInternalFilter } from '../permissions/filters';
+import { activeTaskWhere, taskWhereForUser, taskCommentInternalFilter } from '../permissions/filters';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, search, status, sortBy, sortOrder } = parsePagination(req.query);
+    const { page, limit, skip, search, status, sortBy, sortOrder, companyId, projectId } =
+      parsePagination(req.query, { maxLimit: 500 });
+    if (companyId) await assertCanAccessCompany(req.user!, companyId);
+    if (projectId) await assertCanAccessProject(req.user!, projectId);
+    const includeArchived = req.query.include_archived === 'true';
+    const archivedOnly = req.query.archived_only === 'true';
     const scope = await taskWhereForUser(req.user!);
     const where = {
       ...scope,
+      ...(archivedOnly
+        ? { archivedAt: { not: null } }
+        : includeArchived
+          ? {}
+          : activeTaskWhere),
+      ...(projectId ? { projectId } : {}),
+      ...(companyId ? { project: { companyId } } : {}),
       ...(status ? { status: status as never } : {}),
       ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
     };
@@ -26,7 +40,13 @@ export async function list(req: Request, res: Response, next: NextFunction) {
         take: limit,
         orderBy: { [sortBy]: sortOrder },
         include: {
-          project: { select: { id: true, name: true } },
+          project: {
+            select: {
+              id: true,
+              name: true,
+              company: { select: { id: true, name: true } },
+            },
+          },
           assignee: { select: { id: true, fullName: true } },
         },
       }),
@@ -44,7 +64,13 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
     const task = await prisma.task.findFirst({
       where: { AND: [{ id: getParam(req, 'id') }, scope] },
       include: {
-        project: { select: { id: true, name: true } },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            company: { select: { id: true, name: true } },
+          },
+        },
         assignee: { select: { id: true, fullName: true, email: true } },
         comments: {
           where: taskCommentInternalFilter(req.user!),
@@ -79,6 +105,16 @@ export async function create(req: Request, res: Response, next: NextFunction) {
         clientVisible: body.client_visible ?? false,
         createdBy: req.user!.id,
       },
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            company: { select: { id: true, name: true } },
+          },
+        },
+        assignee: { select: { id: true, fullName: true } },
+      },
     });
     return created(res, task);
   } catch (err) {
@@ -90,16 +126,37 @@ export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     await assertCanModifyTask(req.user!, getParam(req, 'id'));
     const body = req.body;
+    const data: Prisma.TaskUncheckedUpdateInput = {};
+    if (body.title !== undefined) data.title = body.title;
+    if (body.description !== undefined) data.description = body.description;
+    if (body.assigned_to !== undefined) data.assignedTo = body.assigned_to;
+    if (body.status !== undefined) data.status = body.status;
+    if (body.priority !== undefined) data.priority = body.priority;
+    if (body.due_date !== undefined) {
+      data.dueDate = body.due_date ? new Date(body.due_date) : null;
+    }
+    if (req.user!.role !== 'client' && body.client_visible !== undefined) {
+      data.clientVisible = body.client_visible;
+    }
+    if (body.archived !== undefined) {
+      assertNotClient(req.user!);
+      data.archivedAt = body.archived ? new Date() : null;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new AppError(ErrorCodes.VALIDATION_ERROR, 'No fields to update', 400);
+    }
     const task = await prisma.task.update({
       where: { id: getParam(req, 'id') },
-      data: {
-        title: body.title,
-        description: body.description,
-        assignedTo: body.assigned_to,
-        status: body.status,
-        priority: body.priority,
-        dueDate: body.due_date ? new Date(body.due_date) : undefined,
-        clientVisible: req.user!.role === 'client' ? undefined : body.client_visible,
+      data,
+      include: {
+        project: {
+          select: {
+            id: true,
+            name: true,
+            company: { select: { id: true, name: true } },
+          },
+        },
+        assignee: { select: { id: true, fullName: true } },
       },
     });
     return success(res, task);

@@ -1,9 +1,20 @@
 import { Request, Response, NextFunction } from 'express';
-import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { projectWhereForUser, getClientCompanyIds, updateVisibilityFilter } from '../permissions/filters';
+import {
+  mapDashboardApproval,
+  mapDashboardDeadline,
+  mapDashboardFile,
+  mapDashboardProject,
+  mapDashboardTask,
+  mapDashboardUpdate,
+} from '../services/dashboard.service';
+
+const projectInclude = { company: { select: { name: true } } };
+const taskDeadlineInclude = { project: { select: { name: true } } };
+const updateInclude = { project: { select: { name: true } } };
 
 export async function admin(req: Request, res: Response, next: NextFunction) {
   try {
@@ -11,63 +22,65 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Admin dashboard only', 403);
     }
     const now = new Date();
+    const inTwoWeeks = new Date(now.getTime() + 14 * 86400000);
+    const activeWhere = { status: { not: 'complete' as const } };
+
     const [
-      activeProjects,
-      projectsByStatus,
-      overdueTasks,
-      waitingOnClient,
-      recentMessages,
-      recentNudges,
+      activeProjectCount,
+      waitingOnClientCount,
+      pendingApprovalCount,
+      unreadMessageCount,
+      projects,
+      recentUpdates,
       upcomingDeadlines,
-      recentApprovals,
+      pendingApprovals,
       recentFiles,
     ] = await Promise.all([
-      prisma.project.count({ where: { status: { not: 'complete' } } }),
-      prisma.project.groupBy({ by: ['status'], _count: true }),
-      prisma.task.findMany({
-        where: { dueDate: { lt: now }, status: { not: 'complete' } },
-        take: 10,
-        include: { project: { select: { name: true } } },
-      }),
+      prisma.project.count({ where: activeWhere }),
+      prisma.project.count({ where: { status: 'waiting_on_client' } }),
+      prisma.approval.count({ where: { status: 'waiting_for_client' } }),
+      prisma.message.count({ where: { readAt: null } }),
       prisma.project.findMany({
-        where: { status: 'waiting_on_client' },
-        take: 10,
-        include: { company: { select: { name: true } } },
+        where: activeWhere,
+        orderBy: { updatedAt: 'desc' },
+        take: 12,
+        include: projectInclude,
       }),
-      prisma.message.findMany({
+      prisma.projectUpdate.findMany({
         orderBy: { createdAt: 'desc' },
         take: 10,
-        include: { sender: { select: { fullName: true } } },
-      }),
-      prisma.nudge.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-        include: { user: { select: { fullName: true } }, project: { select: { name: true } } },
+        include: updateInclude,
       }),
       prisma.task.findMany({
         where: {
-          dueDate: { gte: now, lte: new Date(now.getTime() + 14 * 86400000) },
+          archivedAt: null,
+          dueDate: { gte: now, lte: inTwoWeeks },
           status: { not: 'complete' },
         },
         take: 10,
         orderBy: { dueDate: 'asc' },
+        include: taskDeadlineInclude,
       }),
       prisma.approval.findMany({
+        where: { status: 'waiting_for_client' },
         orderBy: { createdAt: 'desc' },
         take: 10,
       }),
       prisma.file.findMany({ orderBy: { createdAt: 'desc' }, take: 10 }),
     ]);
+
     return success(res, {
-      activeProjectCount: activeProjects,
-      projectsByStatus,
-      overdueTasks,
-      waitingOnClient,
-      recentMessages,
-      recentNudges,
-      upcomingDeadlines,
-      recentApprovals,
-      recentFiles,
+      stats: {
+        activeProjects: activeProjectCount,
+        waitingOnClient: waitingOnClientCount,
+        pendingApprovals: pendingApprovalCount,
+        unreadMessages: unreadMessageCount,
+      },
+      projects: projects.map(mapDashboardProject),
+      recentUpdates: recentUpdates.map(mapDashboardUpdate),
+      upcomingDeadlines: upcomingDeadlines.map(mapDashboardDeadline),
+      pendingApprovals: pendingApprovals.map(mapDashboardApproval),
+      recentFiles: recentFiles.map(mapDashboardFile),
     });
   } catch (err) {
     next(err);
@@ -81,50 +94,75 @@ export async function client(req: Request, res: Response, next: NextFunction) {
     }
     const companyIds = await getClientCompanyIds(req.user!.id);
     const visibility = updateVisibilityFilter(req.user!);
-    const [activeProjects, latestUpdates, waitingOnClient, approvalsNeeded, recentFiles, messages] =
-      await Promise.all([
-        prisma.project.findMany({
-          where: { companyId: { in: companyIds }, status: { not: 'complete' } },
-          include: { services: { select: { serviceName: true, progress: true } } },
-        }),
-        prisma.projectUpdate.findMany({
-          where: { project: { companyId: { in: companyIds } }, ...visibility },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        }),
-        prisma.project.findMany({
-          where: { companyId: { in: companyIds }, status: 'waiting_on_client' },
-        }),
-        prisma.approval.findMany({
-          where: {
-            project: { companyId: { in: companyIds } },
-            status: 'waiting_for_client',
-          },
-        }),
-        prisma.file.findMany({
-          where: { companyId: { in: companyIds } },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        }),
-        prisma.message.findMany({
-          where: {
-            internalOnly: false,
-            conversation: {
-              members: { some: { userId: req.user!.id } },
-              type: 'client_project',
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        }),
-      ]);
-    return success(res, {
+    const activeWhere = { companyId: { in: companyIds }, status: { not: 'complete' as const } };
+
+    const [
       activeProjects,
       latestUpdates,
       waitingOnClient,
       approvalsNeeded,
       recentFiles,
-      messages,
+      unreadMessageCount,
+    ] = await Promise.all([
+      prisma.project.findMany({
+        where: activeWhere,
+        orderBy: { updatedAt: 'desc' },
+        include: projectInclude,
+      }),
+      prisma.projectUpdate.findMany({
+        where: { project: { companyId: { in: companyIds } }, ...visibility },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        include: updateInclude,
+      }),
+      prisma.project.findMany({
+        where: { companyId: { in: companyIds }, status: 'waiting_on_client' },
+        include: projectInclude,
+      }),
+      prisma.approval.findMany({
+        where: {
+          project: { companyId: { in: companyIds } },
+          status: 'waiting_for_client',
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+      prisma.file.findMany({
+        where: { companyId: { in: companyIds } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+      prisma.message.count({
+        where: {
+          readAt: null,
+          internalOnly: false,
+          senderId: { not: req.user!.id },
+          conversation: {
+            members: { some: { userId: req.user!.id } },
+            type: 'client_project',
+          },
+        },
+      }),
+    ]);
+
+    const needsFromClient = waitingOnClient.map((p) => ({
+      id: p.id,
+      title: p.name,
+      description: p.clientFacingNotes ?? 'We need your input to keep moving forward.',
+    }));
+
+    return success(res, {
+      stats: {
+        activeProjects: activeProjects.length,
+        waitingOnClient: waitingOnClient.length,
+        pendingApprovals: approvalsNeeded.length,
+        unreadMessages: unreadMessageCount,
+      },
+      projects: activeProjects.map(mapDashboardProject),
+      recentUpdates: latestUpdates.map(mapDashboardUpdate),
+      needsFromClient,
+      pendingApprovals: approvalsNeeded.map(mapDashboardApproval),
+      recentFiles: recentFiles.map(mapDashboardFile),
     });
   } catch (err) {
     next(err);
@@ -137,41 +175,46 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
       throw new AppError(ErrorCodes.FORBIDDEN, 'Salesman dashboard only', 403);
     }
     const scope = await projectWhereForUser(req.user!);
-    const [assignedProjects, latestUpdates, nudges, internalNotes] = await Promise.all([
+    const activeWhere = { AND: [scope, { status: { not: 'complete' as const } }] };
+
+    const [assignedProjects, latestUpdates, pendingApprovals, unreadMessageCount] = await Promise.all([
       prisma.project.findMany({
-        where: scope,
-        include: { company: { select: { name: true } } },
+        where: activeWhere,
+        orderBy: { updatedAt: 'desc' },
+        include: projectInclude,
       }),
       prisma.projectUpdate.findMany({
         where: { project: scope },
         orderBy: { createdAt: 'desc' },
         take: 10,
+        include: updateInclude,
       }),
-      prisma.nudge.findMany({
-        where: { project: scope },
+      prisma.approval.findMany({
+        where: { project: scope, status: 'waiting_for_client' },
         orderBy: { createdAt: 'desc' },
         take: 10,
-        include: { user: { select: { fullName: true } }, project: { select: { name: true } } },
       }),
-      prisma.internalNote.findMany({
-        where: { project: scope },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
+      prisma.message.count({
+        where: {
+          readAt: null,
+          senderId: { not: req.user!.id },
+          conversation: { members: { some: { userId: req.user!.id } } },
+        },
       }),
     ]);
-    const projectsByStatus = assignedProjects.reduce(
-      (acc, p) => {
-        acc[p.status] = (acc[p.status] ?? 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>,
-    );
+
+    const waitingOnClient = assignedProjects.filter((p) => p.status === 'waiting_on_client').length;
+
     return success(res, {
-      assignedProjects,
-      projectsByStatus,
-      latestUpdates,
-      nudges,
-      internalNotes,
+      stats: {
+        activeProjects: assignedProjects.length,
+        waitingOnClient,
+        pendingApprovals: pendingApprovals.length,
+        unreadMessages: unreadMessageCount,
+      },
+      projects: assignedProjects.map(mapDashboardProject),
+      recentUpdates: latestUpdates.map(mapDashboardUpdate),
+      pendingApprovals: pendingApprovals.map(mapDashboardApproval),
     });
   } catch (err) {
     next(err);
@@ -185,55 +228,75 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
     }
     const userId = req.user!.id;
     const now = new Date();
-    const [assignedTasks, assignedProjects, upcomingDeadlines, internalMessages, deliverablesNeedingUpload] =
-      await Promise.all([
+    const inTwoWeeks = new Date(now.getTime() + 14 * 86400000);
+    const projectScope = {
+      OR: [{ projectManagerId: userId }, { teamMembers: { some: { userId } } }],
+    };
+
+    const [
+      assignedTasks,
+      assignedProjects,
+      upcomingDeadlines,
+      unreadMessageCount,
+      pendingApprovalCount,
+      deliverablesNeedingUpload,
+    ] = await Promise.all([
         prisma.task.findMany({
-          where: { assignedTo: userId, status: { not: 'complete' } },
-          include: { project: { select: { name: true } } },
+          where: { archivedAt: null, assignedTo: userId, status: { not: 'complete' } },
+          orderBy: { dueDate: 'asc' },
+          take: 12,
+          include: taskDeadlineInclude,
         }),
         prisma.project.findMany({
-          where: {
-            OR: [
-              { projectManagerId: userId },
-              { teamMembers: { some: { userId } } },
-            ],
-          },
+          where: { ...projectScope, status: { not: 'complete' } },
+          orderBy: { updatedAt: 'desc' },
+          include: projectInclude,
         }),
         prisma.task.findMany({
           where: {
+            archivedAt: null,
             assignedTo: userId,
-            dueDate: { gte: now, lte: new Date(now.getTime() + 14 * 86400000) },
+            dueDate: { gte: now, lte: inTwoWeeks },
             status: { not: 'complete' },
           },
           orderBy: { dueDate: 'asc' },
+          take: 10,
+          include: taskDeadlineInclude,
         }),
-        prisma.message.findMany({
+        prisma.message.count({
           where: {
+            readAt: null,
             internalOnly: true,
+            senderId: { not: userId },
             conversation: { members: { some: { userId } } },
           },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
+        }),
+        prisma.approval.count({
+          where: { project: projectScope, status: 'waiting_for_client' },
         }),
         prisma.file.findMany({
           where: {
             status: 'needs_review',
-            project: {
-              OR: [
-                { projectManagerId: userId },
-                { teamMembers: { some: { userId } } },
-              ],
-            },
+            project: projectScope,
           },
+          orderBy: { createdAt: 'desc' },
           take: 10,
         }),
       ]);
+
+    const waitingOnClient = assignedProjects.filter((p) => p.status === 'waiting_on_client').length;
+
     return success(res, {
-      assignedTasks,
-      assignedProjects,
-      upcomingDeadlines,
-      internalMessages,
-      deliverablesNeedingUpload,
+      stats: {
+        activeProjects: assignedProjects.length,
+        waitingOnClient,
+        pendingApprovals: pendingApprovalCount,
+        unreadMessages: unreadMessageCount,
+      },
+      projects: assignedProjects.map(mapDashboardProject),
+      assignedTasks: assignedTasks.map(mapDashboardTask),
+      upcomingDeadlines: upcomingDeadlines.map(mapDashboardDeadline),
+      recentFiles: deliverablesNeedingUpload.map(mapDashboardFile),
     });
   } catch (err) {
     next(err);

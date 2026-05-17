@@ -1,20 +1,27 @@
-import { createApp } from './app';
-import { env } from './config/env';
+/**
+ * Local Node dev (SQLite file). For Cloudflare-native dev use: npm run dev (wrangler).
+ */
+import { bootstrap } from './bootstrap';
 
-const app = createApp();
+async function main() {
+  await bootstrap();
+  const { createApp } = await import('./app');
+  const { env } = await import('./config/env');
 
-const server = app.listen(env.PORT, () => {
-  console.log(`Digital Kingsmen Portal API running on port ${env.PORT}`);
-  console.log(`API base: http://localhost:${env.PORT}/api`);
-  console.log(`Docs: http://localhost:${env.PORT}/api/docs`);
-});
-
-server.on('error', (err: NodeJS.ErrnoException) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(
-      `Port ${env.PORT} is already in use. Stop the other process (e.g. lsof -i :${env.PORT}) or set PORT in .env.`,
-    );
-    process.exit(1);
+  const app = createApp();
+  if (process.env.ENABLE_SWAGGER === 'true') {
+    const { mountDocs } = await import('./routes/docs.routes');
+    await mountDocs(app);
   }
-  throw err;
+  app.listen(env.PORT, () => {
+    console.log(`Digital Kingsmen Portal API running on port ${env.PORT}`);
+    console.log(`API base: http://localhost:${env.PORT}/api`);
+    console.log(`Docs: http://localhost:${env.PORT}/api/docs`);
+    console.log('Tip: use `npm run dev` for Wrangler + D1 + R2 (Cloudflare-native)');
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
