@@ -4,7 +4,7 @@
 import { bootstrap } from './bootstrap';
 
 async function main() {
-  await bootstrap();
+  bootstrap();
   const { createApp } = await import('./app');
   const { env } = await import('./config/env');
 

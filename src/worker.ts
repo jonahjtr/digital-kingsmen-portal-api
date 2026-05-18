@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { httpServerHandler } from 'cloudflare:node';
 import { bootstrap } from './bootstrap';
 
-await bootstrap({
+bootstrap({
   DB: env.DB,
   R2: (env as { R2?: R2Bucket }).R2,
 });
