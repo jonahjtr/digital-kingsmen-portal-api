@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:cf": "npm run cf:migrate:remote && npm run deploy",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
