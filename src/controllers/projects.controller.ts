@@ -33,14 +33,15 @@ function mapProjectBody(body: Record<string, unknown>) {
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, search, status, sortBy, sortOrder, companyId } = parsePagination(
-      req.query,
-    );
+    const { page, limit, skip, search, status, sortBy, sortOrder, companyId, projectId } =
+      parsePagination(req.query);
     if (companyId) await assertCanAccessCompany(req.user!, companyId);
+    if (projectId) await assertCanAccessProject(req.user!, projectId);
     const scope = await projectWhereForUser(req.user!);
     const where = {
       ...scope,
       ...(companyId ? { companyId } : {}),
+      ...(projectId ? { id: projectId } : {}),
       ...(status ? { status: status as never } : {}),
       ...(search ? { name: { contains: search, mode: 'insensitive' as const } } : {}),
     };

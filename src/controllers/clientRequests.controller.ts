@@ -8,7 +8,9 @@ import { getClientCompanyIds } from '../permissions/filters';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, status } = parsePagination(req.query);
+    const { page, limit, skip, status, companyId, projectId } = parsePagination(req.query);
+    if (companyId) await assertCanAccessCompany(req.user!, companyId);
+    if (projectId) await assertCanAccessProject(req.user!, projectId);
     let where: Record<string, unknown> = {};
     if (req.user!.role === 'client') {
       const companyIds = await getClientCompanyIds(req.user!.id);
@@ -27,6 +29,8 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       where = { companyId: { in: companies.map((c) => c.id) } };
     }
     if (status) where.status = status;
+    if (companyId) where.companyId = companyId;
+    if (projectId) where.projectId = projectId;
     const [requests, total] = await Promise.all([
       prisma.clientRequest.findMany({
         where,

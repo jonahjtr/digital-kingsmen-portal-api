@@ -9,17 +9,28 @@ import { getStorageProvider } from '../storage';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, status } = parsePagination(req.query);
+    const { page, limit, skip, status, companyId, projectId } = parsePagination(req.query);
+    if (companyId) await assertCanAccessCompany(req.user!, companyId);
+    if (projectId) await assertCanAccessProject(req.user!, projectId);
     const projectScope = await projectWhereForUser(req.user!);
     const companyScope = await companyWhereForUser(req.user!);
-    const where = {
-      OR: [
-        { project: projectScope },
-        { company: companyScope },
-        { uploadedBy: req.user!.id },
-      ],
-      ...(status ? { status: status as never } : {}),
-    };
+    const andFilters: Record<string, unknown>[] = [
+      {
+        OR: [
+          { project: projectScope },
+          { company: companyScope },
+          { uploadedBy: req.user!.id },
+        ],
+      },
+    ];
+    if (companyId) {
+      andFilters.push({
+        OR: [{ companyId }, { project: { companyId } }],
+      });
+    }
+    if (projectId) andFilters.push({ projectId });
+    if (status) andFilters.push({ status: status as never });
+    const where = { AND: andFilters };
     const [files, total] = await Promise.all([
       prisma.file.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
       prisma.file.count({ where }),

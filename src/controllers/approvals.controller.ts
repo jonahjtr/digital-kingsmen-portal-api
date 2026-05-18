@@ -3,15 +3,24 @@ import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { assertCanAccessProject } from '../permissions/access';
+import { assertCanAccessCompany, assertCanAccessProject } from '../permissions/access';
 import { projectWhereForUser } from '../permissions/filters';
 import { createNotification } from '../services/notification.service';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { page, limit, skip, status } = parsePagination(req.query);
+    const { page, limit, skip, status, companyId, projectId } = parsePagination(req.query);
+    if (companyId) await assertCanAccessCompany(req.user!, companyId);
+    if (projectId) await assertCanAccessProject(req.user!, projectId);
     const projectScope = await projectWhereForUser(req.user!);
-    const where = { project: projectScope, ...(status ? { status: status as never } : {}) };
+    const where = {
+      project: {
+        ...projectScope,
+        ...(companyId ? { companyId } : {}),
+        ...(projectId ? { id: projectId } : {}),
+      },
+      ...(status ? { status: status as never } : {}),
+    };
     const [approvals, total] = await Promise.all([
       prisma.approval.findMany({
         where,
