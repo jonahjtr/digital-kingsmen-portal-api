@@ -18,6 +18,7 @@ export function mapDashboardProject(p: ProjectWithCompany) {
     status: p.status,
     progress: Math.round(p.overallProgress ?? 0),
     dueDate: p.dueDate?.toISOString() ?? undefined,
+    companyId: p.companyId,
     companyName: p.company?.name,
   };
 }
