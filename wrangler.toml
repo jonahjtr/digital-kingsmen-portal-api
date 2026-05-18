@@ -1,4 +1,5 @@
 name = "digital-kingsmen-portal-api"
+account_id = "cca5a114f4b3baf1459a9b2697cad2e1"
 main = "src/worker.ts"
 workers_dev = true
 compatibility_date = "2025-04-01"
