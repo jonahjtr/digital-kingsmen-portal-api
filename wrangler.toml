@@ -26,7 +26,8 @@ bucket_name = "portal-uploads"
 
 [vars]
 JWT_EXPIRES_IN = "7d"
-CORS_ORIGIN = "http://localhost:5173,http://localhost:8787"
+CORS_ORIGIN = "http://localhost:5173,http://localhost:8080,http://localhost:8787,https://kingsmen-nexus.auto-cca.workers.dev"
+APP_URL = "https://kingsmen-nexus.auto-cca.workers.dev"
 NUDGE_COOLDOWN_MINUTES = "240"
 STORAGE_DRIVER = "r2"
 
