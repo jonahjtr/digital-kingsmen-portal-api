@@ -12,6 +12,7 @@ import {
 } from '../permissions/access';
 import { projectWhereForUser, updateVisibilityFilter } from '../permissions/filters';
 import { stripInternalProjectFields } from '../lib/sanitize';
+import { textContains } from '../lib/searchFilter';
 import * as nudgeService from '../services/nudge.service';
 import * as progressService from '../services/progress.service';
 
@@ -43,7 +44,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       ...(companyId ? { companyId } : {}),
       ...(projectId ? { id: projectId } : {}),
       ...(status ? { status: status as never } : {}),
-      ...(search ? { name: { contains: search, mode: 'insensitive' as const } } : {}),
+      ...(search ? { name: textContains(search) } : {}),
     };
     const [projects, total] = await Promise.all([
       prisma.project.findMany({

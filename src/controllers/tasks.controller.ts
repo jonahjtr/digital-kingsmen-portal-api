@@ -11,6 +11,8 @@ import {
   assertNotClient,
 } from '../permissions/access';
 import { activeTaskWhere, taskWhereForUser, taskCommentInternalFilter } from '../permissions/filters';
+import { textContains } from '../lib/searchFilter';
+import { resolveTaskSortField } from '../lib/sortFields';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -31,14 +33,16 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       ...(projectId ? { projectId } : {}),
       ...(companyId ? { project: { companyId } } : {}),
       ...(status ? { status: status as never } : {}),
-      ...(search ? { title: { contains: search, mode: 'insensitive' as const } } : {}),
+      ...(search ? { title: textContains(search) } : {}),
     };
+    const orderField = resolveTaskSortField(sortBy, archivedOnly);
+
     const [tasks, total] = await Promise.all([
       prisma.task.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: { [orderField]: sortOrder },
         include: {
           project: {
             select: {

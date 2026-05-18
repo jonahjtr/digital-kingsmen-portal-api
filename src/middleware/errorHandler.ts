@@ -3,8 +3,11 @@ import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { error } from '../lib/apiResponse';
+import { applyCorsHeaders } from '../lib/cors';
 
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
+  applyCorsHeaders(req, res);
+
   if (err instanceof AppError) {
     return error(res, err.code, err.message, err.statusCode);
   }

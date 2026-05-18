@@ -6,6 +6,7 @@ import { sanitizeUser } from '../lib/sanitize';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertRole } from '../permissions/access';
+import { textContains } from '../lib/searchFilter';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -14,8 +15,8 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     const where = search
       ? {
           OR: [
-            { email: { contains: search, mode: 'insensitive' as const } },
-            { fullName: { contains: search, mode: 'insensitive' as const } },
+            { email: textContains(search) },
+            { fullName: textContains(search) },
           ],
         }
       : {};

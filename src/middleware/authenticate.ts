@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { verifyToken } from '../lib/jwt';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { error } from '../lib/apiResponse';
+import { applyCorsHeaders } from '../lib/cors';
 
 export async function authenticate(req: Request, res: Response, next: NextFunction) {
   try {
@@ -19,6 +20,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     req.user = user;
     next();
   } catch (err) {
+    applyCorsHeaders(req, res);
     if (err instanceof AppError) {
       return error(res, err.code, err.message, err.statusCode);
     }

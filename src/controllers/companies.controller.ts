@@ -5,6 +5,7 @@ import { success, created, buildMeta, parsePagination } from '../lib/apiResponse
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessCompany, assertNotClient, stripClientForbiddenFields } from '../permissions/access';
 import { companyWhereForUser } from '../permissions/filters';
+import { textContains } from '../lib/searchFilter';
 
 function mapCompanyBody(body: Record<string, unknown>) {
   return {
@@ -28,7 +29,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     const where = {
       ...scope,
       ...(status ? { status: status as 'active' | 'inactive' | 'prospect' } : {}),
-      ...(search ? { name: { contains: search, mode: 'insensitive' as const } } : {}),
+      ...(search ? { name: textContains(search) } : {}),
     };
     const [companies, total] = await Promise.all([
       prisma.company.findMany({

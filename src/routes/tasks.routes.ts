@@ -2,7 +2,11 @@ import { Router } from 'express';
 import * as tasksController from '../controllers/tasks.controller';
 import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
-import { createTaskSchema, updateTaskSchema, createTaskCommentSchema } from '../validators/tasks';
+import {
+  createTaskSchema,
+  updateTaskSchema,
+  createTaskCommentSchema,
+} from '../validators/tasks';
 import { idParamSchema } from '../validators/common';
 
 const router = Router();
