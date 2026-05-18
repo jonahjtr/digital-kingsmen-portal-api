@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 
+const BODY_READ_TIMEOUT_MS = 10_000;
+
 /** Workers-safe body parser (no iconv-lite / body-parser). */
 export function workersBodyParser() {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -8,14 +10,29 @@ export function workersBodyParser() {
       return next();
     }
 
+    const contentLength = req.headers['content-length'];
+    if (contentLength === '0') {
+      req.body = {};
+      return next();
+    }
+
     const chunks: Buffer[] = [];
     try {
-      await new Promise<void>((resolve, reject) => {
-        req.on('data', (chunk: Buffer) => chunks.push(chunk));
-        req.on('end', () => resolve());
-        req.on('error', reject);
-      });
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => resolve());
+          req.on('error', reject);
+        }),
+        new Promise<void>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`Request body read timed out after ${BODY_READ_TIMEOUT_MS}ms`)),
+            BODY_READ_TIMEOUT_MS,
+          );
+        }),
+      ]);
     } catch {
+      req.body = {};
       return next();
     }
 
