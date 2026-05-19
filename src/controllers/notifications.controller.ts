@@ -3,6 +3,7 @@ import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
+import { broadcastUser } from '../party/broadcast';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -33,6 +34,10 @@ export async function markRead(req: Request, res: Response, next: NextFunction) 
       where: { id: getParam(req, 'id') },
       data: { readAt: new Date() },
     });
+    await broadcastUser(req.user!.id, {
+      type: 'notification.read',
+      payload: updated,
+    });
     return success(res, updated);
   } catch (err) {
     next(err);
@@ -44,6 +49,10 @@ export async function markAllRead(req: Request, res: Response, next: NextFunctio
     await prisma.notification.updateMany({
       where: { userId: req.user!.id, readAt: null },
       data: { readAt: new Date() },
+    });
+    await broadcastUser(req.user!.id, {
+      type: 'notifications.read_all',
+      payload: { userId: req.user!.id },
     });
     return success(res, { updated: true });
   } catch (err) {

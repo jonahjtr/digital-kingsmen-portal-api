@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { broadcastUser } from '../party/broadcast';
 
 export async function createNotification(
   userId: string,
@@ -6,9 +7,14 @@ export async function createNotification(
   message: string,
   type: string,
 ) {
-  return prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: { userId, title, message, type },
   });
+  await broadcastUser(userId, {
+    type: 'notification.created',
+    payload: notification,
+  });
+  return notification;
 }
 
 export async function notifyUsers(
@@ -18,7 +24,7 @@ export async function notifyUsers(
   type: string,
 ) {
   const unique = [...new Set(userIds)];
-  await prisma.notification.createMany({
-    data: unique.map((userId) => ({ userId, title, message, type })),
-  });
+  await Promise.all(
+    unique.map((userId) => createNotification(userId, title, message, type)),
+  );
 }

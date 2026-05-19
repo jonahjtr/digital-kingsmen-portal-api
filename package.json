@@ -20,6 +20,8 @@
     "cf:setup:local": "npm run cf:migrate:local && npm run db:seed:cf",
     "cf:seed:remote": "wrangler d1 export portal-db --local --output /tmp/portal-seed-data.sql --no-schema -y && grep -v 'INSERT INTO \"d1_migrations\"' /tmp/portal-seed-data.sql > /tmp/portal-seed-remote.sql && wrangler d1 execute portal-db --remote --file=/tmp/portal-seed-remote.sql -y",
     "cf:types": "wrangler types",
+    "verify:party": "node scripts/verify-party-ws.mjs",
+    "verify:party:internal": "node scripts/verify-internal-broadcast.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "wrangler": "wrangler",
@@ -42,6 +44,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "partyserver": "^0.5.6",
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0",
     "zod": "^3.24.1"

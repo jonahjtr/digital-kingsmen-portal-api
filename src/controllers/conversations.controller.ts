@@ -6,6 +6,8 @@ import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject, assertNotClient } from '../permissions/access';
 import { messageInternalFilter } from '../permissions/filters';
 import { mapConversationListItem, mapMessageItem } from '../services/conversations.mapper';
+import { broadcastConversation } from '../party/broadcast';
+import { createNotification } from '../services/notification.service';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -133,9 +135,10 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     const body = req.body;
     let internalOnly = body.internal_only ?? false;
     if (req.user!.role === 'client') internalOnly = false;
+    const conversationId = getParam(req, 'id');
     const message = await prisma.message.create({
       data: {
-        conversationId: getParam(req, 'id'),
+        conversationId,
         senderId: req.user!.id,
         message: body.message,
         internalOnly,
@@ -143,9 +146,30 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
       include: { sender: { select: { id: true, fullName: true, avatarUrl: true } } },
     });
     await prisma.conversation.update({
-      where: { id: getParam(req, 'id') },
+      where: { id: conversationId },
       data: { updatedAt: new Date() },
     });
+    await broadcastConversation(conversationId, {
+      type: 'message.created',
+      payload: message,
+      tags: internalOnly ? ['staff'] : undefined,
+    });
+
+    const members = await prisma.conversationMember.findMany({
+      where: { conversationId },
+      include: { user: { select: { id: true, role: true } } },
+    });
+    const preview = body.message.slice(0, 120);
+    const title = 'New message';
+    await Promise.all(
+      members
+        .filter((m) => m.userId !== req.user!.id)
+        .filter((m) => !(internalOnly && m.user.role === 'client'))
+        .map((m) =>
+          createNotification(m.userId, title, preview, 'message').catch(() => undefined),
+        ),
+    );
+
     return created(res, mapMessageItem(message));
   } catch (err) {
     next(err);
@@ -164,6 +188,10 @@ export async function markMessageRead(req: Request, res: Response, next: NextFun
     const updated = await prisma.message.update({
       where: { id: getParam(req, 'id') },
       data: { readAt: new Date() },
+    });
+    await broadcastConversation(message.conversationId, {
+      type: 'message.read',
+      payload: updated,
     });
     return success(res, updated);
   } catch (err) {

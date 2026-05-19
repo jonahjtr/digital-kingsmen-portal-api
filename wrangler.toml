@@ -25,6 +25,18 @@ migrations_dir = "migrations"
 binding = "R2"
 bucket_name = "portal-uploads"
 
+[[durable_objects.bindings]]
+name = "CONVERSATION_SERVER"
+class_name = "ConversationPartyServer"
+
+[[durable_objects.bindings]]
+name = "USER_SERVER"
+class_name = "UserPartyServer"
+
+[[migrations]]
+tag = "v1-partyserver"
+new_sqlite_classes = ["ConversationPartyServer", "UserPartyServer"]
+
 [vars]
 JWT_EXPIRES_IN = "7d"
 CORS_ORIGIN = "http://localhost:5173,http://localhost:8080,http://localhost:8081,http://localhost:8787,https://kingsmen-nexus.auto-cca.workers.dev"
