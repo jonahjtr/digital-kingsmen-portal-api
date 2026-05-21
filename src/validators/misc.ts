@@ -75,10 +75,38 @@ export const createAnnouncementSchema = z.object({
 
 export const updateAnnouncementSchema = createAnnouncementSchema.partial();
 
-export const createInternalNoteSchema = z.object({
-  project_id: z.string().uuid().optional(),
+export const createInternalNoteSchema = z
+  .object({
+    project_id: z.string().uuid().optional(),
+    company_id: z.string().uuid().optional(),
+    note: z.string().min(1),
+  })
+  .refine((data) => Boolean(data.project_id || data.company_id), {
+    message: 'Either project_id or company_id is required',
+  });
+
+export const listInternalNotesQuerySchema = z.object({
   company_id: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+});
+
+export const updateInternalNoteSchema = z.object({
   note: z.string().min(1),
+});
+
+export const createCallTranscriptionSchema = z.object({
+  company_id: z.string().uuid(),
+  project_id: z.string().uuid().optional(),
+  title: z.string().min(1).max(200),
+  transcript: z.string().min(1).max(500_000),
+  call_date: z.string().optional(),
+});
+
+export const listCallTranscriptionsQuerySchema = z.object({
+  company_id: z.string().uuid(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(50).optional(),
 });
 
 export const updateFileSchema = z.object({

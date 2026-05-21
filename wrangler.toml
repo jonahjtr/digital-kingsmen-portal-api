@@ -25,6 +25,10 @@ migrations_dir = "migrations"
 binding = "R2"
 bucket_name = "portal-uploads"
 
+# Logo resize/WebP via Cloudflare Images (Images Free: 5k transforms/month).
+[images]
+binding = "IMAGES"
+
 [[durable_objects.bindings]]
 name = "CONVERSATION_SERVER"
 class_name = "ConversationPartyServer"

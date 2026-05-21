@@ -15,6 +15,14 @@ import { stripInternalProjectFields } from '../lib/sanitize';
 import { textContains } from '../lib/searchFilter';
 import * as nudgeService from '../services/nudge.service';
 import * as progressService from '../services/progress.service';
+import { mapNestedCompanyLogo } from '../lib/companyResponse';
+
+const companySelect = { id: true, name: true, logoUrl: true } as const;
+
+function withCompanyLogo<T extends { company?: { logoUrl?: string | null } | null }>(project: T) {
+  if (!project.company) return project;
+  return { ...project, company: mapNestedCompanyLogo(project.company) };
+}
 
 function mapProjectBody(body: Record<string, unknown>) {
   const data: Record<string, unknown> = {};
@@ -53,13 +61,15 @@ export async function list(req: Request, res: Response, next: NextFunction) {
         take: limit,
         orderBy: { [sortBy]: sortOrder },
         include: {
-          company: { select: { id: true, name: true } },
+          company: { select: companySelect },
           services: { select: { id: true, serviceName: true, progress: true, status: true } },
         },
       }),
       prisma.project.count({ where }),
     ]);
-    const data = projects.map((p) => stripInternalProjectFields(p, req.user!.role));
+    const data = projects.map((p) =>
+      withCompanyLogo(stripInternalProjectFields(p, req.user!.role)),
+    );
     return success(res, data, 200, buildMeta(page, limit, total));
   } catch (err) {
     next(err);
@@ -69,7 +79,10 @@ export async function list(req: Request, res: Response, next: NextFunction) {
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
     const project = await getProjectIfAccessible(req.user!, getParam(req, 'id'));
-    return success(res, stripInternalProjectFields(project, req.user!.role));
+    return success(
+      res,
+      withCompanyLogo(stripInternalProjectFields(project, req.user!.role)),
+    );
   } catch (err) {
     next(err);
   }

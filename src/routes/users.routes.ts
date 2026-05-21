@@ -9,6 +9,12 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', usersController.list);
+router.get('/staff', usersController.listStaff);
+router.get(
+  '/:id/staff-assignments',
+  validate(idParamSchema, 'params'),
+  usersController.listStaffAssignments,
+);
 router.get('/:id', validate(idParamSchema, 'params'), usersController.getById);
 router.post('/', validate(createUserSchema), usersController.create);
 router.patch('/:id', validate(idParamSchema, 'params'), validate(updateUserSchema), usersController.update);

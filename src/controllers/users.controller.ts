@@ -5,8 +5,26 @@ import { hashPassword } from '../lib/password';
 import { sanitizeUser } from '../lib/sanitize';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { assertRole } from '../permissions/access';
+import { assertNotClient, assertRole } from '../permissions/access';
+import { STAFF_ASSIGNMENT_INCLUDE } from '../services/companyStaffAssignments';
 import { textContains } from '../lib/searchFilter';
+import { UserRole } from '@prisma/client';
+
+async function assertCanDeactivateUser(actorId: string, targetId: string): Promise<void> {
+  if (actorId === targetId) {
+    throw new AppError(ErrorCodes.FORBIDDEN, 'You cannot deactivate your own account', 403);
+  }
+  const target = await prisma.user.findUnique({ where: { id: targetId } });
+  if (!target) throw new AppError(ErrorCodes.NOT_FOUND, 'User not found', 404);
+  if (target.role === UserRole.admin && target.isActive) {
+    const activeAdmins = await prisma.user.count({
+      where: { role: UserRole.admin, isActive: true },
+    });
+    if (activeAdmins <= 1) {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot deactivate the last active admin', 403);
+    }
+  }
+}
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -34,6 +52,61 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       prisma.user.count({ where }),
     ]);
     return success(res, users, 200, buildMeta(page, limit, total));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listStaff(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertNotClient(req.user!);
+    if (req.user!.role === 'salesman') {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Not allowed to list staff users', 403);
+    }
+    const roleFilter = req.query.role as string | undefined;
+    const where: Record<string, unknown> = {
+      isActive: true,
+      role: { not: UserRole.client },
+    };
+    if (roleFilter && ['admin', 'salesman', 'employee'].includes(roleFilter)) {
+      where.role = roleFilter as UserRole;
+    }
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: { fullName: 'asc' },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        avatarUrl: true,
+      },
+    });
+    return success(res, users);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listStaffAssignments(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertRole(req.user!, 'admin');
+    const userId = getParam(req, 'id');
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+    if (!user) throw new AppError(ErrorCodes.NOT_FOUND, 'User not found', 404);
+
+    const assignments = await prisma.companyStaffAssignment.findMany({
+      where: { userId },
+      include: {
+        ...STAFF_ASSIGNMENT_INCLUDE,
+        company: { select: { id: true, name: true } },
+      },
+      orderBy: [{ company: { name: 'asc' } }, { staffTag: { sortOrder: 'asc' } }],
+    });
+    return success(res, assignments);
   } catch (err) {
     next(err);
   }
@@ -83,7 +156,12 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     if (phone !== undefined) data.phone = phone;
     if (role && req.user!.role === 'admin') data.role = role;
     if (avatar_url !== undefined) data.avatarUrl = avatar_url;
-    if (is_active !== undefined && req.user!.role === 'admin') data.isActive = is_active;
+    if (is_active !== undefined && req.user!.role === 'admin') {
+      if (is_active === false) {
+        await assertCanDeactivateUser(req.user!.id, getParam(req, 'id'));
+      }
+      data.isActive = is_active;
+    }
     const user = await prisma.user.update({ where: { id: getParam(req, 'id') }, data });
     return success(res, sanitizeUser(user));
   } catch (err) {
@@ -94,6 +172,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
 export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     assertRole(req.user!, 'admin');
+    await assertCanDeactivateUser(req.user!.id, getParam(req, 'id'));
     const user = await prisma.user.update({
       where: { id: getParam(req, 'id') },
       data: { isActive: false },

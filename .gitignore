@@ -14,3 +14,7 @@ dist/
 build/
 coverage/
 uploads/
+prisma/dev.db
+prisma/prisma/
+*.db
+*.db-journal

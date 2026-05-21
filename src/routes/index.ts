@@ -19,6 +19,8 @@ import announcementsRoutes from './announcements.routes';
 import dashboardRoutes from './dashboard.routes';
 import invitesRoutes from './invites.routes';
 import internalNotesRoutes from './internalNotes.routes';
+import callTranscriptionsRoutes from './callTranscriptions.routes';
+import staffTagsRoutes from './staffTags.routes';
 
 const router = Router();
 
@@ -42,5 +44,7 @@ router.use('/announcements', announcementsRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/invites', invitesRoutes);
 router.use('/internal-notes', internalNotesRoutes);
+router.use('/call-transcriptions', callTranscriptionsRoutes);
+router.use('/staff-tags', staffTagsRoutes);
 
 export default router;

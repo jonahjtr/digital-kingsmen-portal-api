@@ -46,8 +46,10 @@ async function main() {
   await prisma.notification.deleteMany();
   await prisma.announcement.deleteMany();
   await prisma.invite.deleteMany();
+  await prisma.companyStaffAssignment.deleteMany();
   await prisma.companyUser.deleteMany();
   await prisma.company.deleteMany();
+  await prisma.staffTag.deleteMany();
   await prisma.serviceTemplate.deleteMany();
   await prisma.user.deleteMany();
 
@@ -92,6 +94,45 @@ async function main() {
       phone: '555-0103',
     },
   });
+
+  const staffTags = await Promise.all([
+    prisma.staffTag.create({
+      data: {
+        id: 'tag-salesman',
+        slug: 'salesman',
+        label: 'Salesman',
+        description: 'Primary sales owner for this client',
+        sortOrder: 10,
+        singular: true,
+      },
+    }),
+    prisma.staffTag.create({
+      data: {
+        id: 'tag-project-manager',
+        slug: 'project_manager',
+        label: 'Project manager',
+        description: 'Overall delivery lead',
+        sortOrder: 20,
+        singular: true,
+      },
+    }),
+    prisma.staffTag.create({
+      data: { id: 'tag-web-dev', slug: 'web_dev', label: 'Web development', sortOrder: 30 },
+    }),
+    prisma.staffTag.create({
+      data: { id: 'tag-software-dev', slug: 'software_dev', label: 'Software development', sortOrder: 40 },
+    }),
+    prisma.staffTag.create({
+      data: { id: 'tag-seo', slug: 'seo', label: 'SEO', sortOrder: 50 },
+    }),
+    prisma.staffTag.create({
+      data: { id: 'tag-ads', slug: 'ads', label: 'Paid ads', sortOrder: 60 },
+    }),
+    prisma.staffTag.create({
+      data: { id: 'tag-design', slug: 'design', label: 'Design', sortOrder: 70 },
+    }),
+  ]);
+  const tagBySlug = Object.fromEntries(staffTags.map((t) => [t.slug, t]));
 
   const clientPure = await prisma.user.create({
     data: {
@@ -235,6 +276,26 @@ async function main() {
         userId: co.client.id,
         relationshipType: 'primary_contact',
       },
+    });
+
+    await prisma.companyStaffAssignment.createMany({
+      data: [
+        {
+          companyId: company.id,
+          userId: salesman.id,
+          staffTagId: tagBySlug.salesman.id,
+        },
+        {
+          companyId: company.id,
+          userId: pm.id,
+          staffTagId: tagBySlug.project_manager.id,
+        },
+        {
+          companyId: company.id,
+          userId: employee.id,
+          staffTagId: tagBySlug.web_dev.id,
+        },
+      ],
     });
 
     let primaryProjectId: string | null = null;

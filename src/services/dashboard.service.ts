@@ -7,7 +7,9 @@ import type {
   Task,
 } from '@prisma/client';
 
-type ProjectWithCompany = Project & { company?: { name: string } | null };
+type ProjectWithCompany = Project & {
+  company?: { id: string; name: string; logoUrl?: string | null } | null;
+};
 type UpdateWithProject = ProjectUpdate & { project?: { name: string } | null };
 type TaskWithProject = Task & { project?: { name: string } | null };
 
@@ -20,6 +22,7 @@ export function mapDashboardProject(p: ProjectWithCompany) {
     dueDate: p.dueDate?.toISOString() ?? undefined,
     companyId: p.companyId,
     companyName: p.company?.name,
+    companyHasLogo: !!p.company?.logoUrl,
   };
 }
 

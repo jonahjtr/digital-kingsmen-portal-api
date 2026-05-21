@@ -2,7 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma';
 import { success } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { projectWhereForUser, getClientCompanyIds, updateVisibilityFilter } from '../permissions/filters';
+import {
+  activeTaskWhere,
+  projectWhereForUser,
+  getClientCompanyIds,
+  taskWhereForUser,
+  updateVisibilityFilter,
+} from '../permissions/filters';
 import {
   mapDashboardApproval,
   mapDashboardDeadline,
@@ -12,9 +18,14 @@ import {
   mapDashboardUpdate,
 } from '../services/dashboard.service';
 
-const projectInclude = { company: { select: { name: true } } };
+const projectInclude = { company: { select: { id: true, name: true, logoUrl: true } } };
 const taskDeadlineInclude = { project: { select: { name: true } } };
 const updateInclude = { project: { select: { name: true } } };
+
+const waitingOnClientTaskWhere = {
+  ...activeTaskWhere,
+  status: 'waiting_on_client' as const,
+};
 
 export async function admin(req: Request, res: Response, next: NextFunction) {
   try {
@@ -28,6 +39,7 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
     const [
       activeProjectCount,
       waitingOnClientCount,
+      waitingOnClientTasks,
       pendingApprovalCount,
       unreadMessageCount,
       projects,
@@ -37,7 +49,13 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
       recentFiles,
     ] = await Promise.all([
       prisma.project.count({ where: activeWhere }),
-      prisma.project.count({ where: { status: 'waiting_on_client' } }),
+      prisma.task.count({ where: waitingOnClientTaskWhere }),
+      prisma.task.findMany({
+        where: waitingOnClientTaskWhere,
+        orderBy: { updatedAt: 'desc' },
+        take: 6,
+        include: taskDeadlineInclude,
+      }),
       prisma.approval.count({ where: { status: 'waiting_for_client' } }),
       prisma.message.count({ where: { readAt: null } }),
       prisma.project.findMany({
@@ -81,6 +99,7 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
       upcomingDeadlines: upcomingDeadlines.map(mapDashboardDeadline),
       pendingApprovals: pendingApprovals.map(mapDashboardApproval),
       recentFiles: recentFiles.map(mapDashboardFile),
+      waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
     });
   } catch (err) {
     next(err);
@@ -175,9 +194,18 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
       throw new AppError(ErrorCodes.FORBIDDEN, 'Salesman dashboard only', 403);
     }
     const scope = await projectWhereForUser(req.user!);
+    const taskScope = await taskWhereForUser(req.user!);
     const activeWhere = { AND: [scope, { status: { not: 'complete' as const } }] };
+    const waitingTaskWhere = { AND: [taskScope, waitingOnClientTaskWhere] };
 
-    const [assignedProjects, latestUpdates, pendingApprovals, unreadMessageCount] = await Promise.all([
+    const [
+      assignedProjects,
+      latestUpdates,
+      pendingApprovals,
+      unreadMessageCount,
+      waitingOnClientCount,
+      waitingOnClientTasks,
+    ] = await Promise.all([
       prisma.project.findMany({
         where: activeWhere,
         orderBy: { updatedAt: 'desc' },
@@ -201,20 +229,26 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
           conversation: { members: { some: { userId: req.user!.id } } },
         },
       }),
+      prisma.task.count({ where: waitingTaskWhere }),
+      prisma.task.findMany({
+        where: waitingTaskWhere,
+        orderBy: { updatedAt: 'desc' },
+        take: 6,
+        include: taskDeadlineInclude,
+      }),
     ]);
-
-    const waitingOnClient = assignedProjects.filter((p) => p.status === 'waiting_on_client').length;
 
     return success(res, {
       stats: {
         activeProjects: assignedProjects.length,
-        waitingOnClient,
+        waitingOnClient: waitingOnClientCount,
         pendingApprovals: pendingApprovals.length,
         unreadMessages: unreadMessageCount,
       },
       projects: assignedProjects.map(mapDashboardProject),
       recentUpdates: latestUpdates.map(mapDashboardUpdate),
       pendingApprovals: pendingApprovals.map(mapDashboardApproval),
+      waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
     });
   } catch (err) {
     next(err);
@@ -233,6 +267,12 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
       OR: [{ projectManagerId: userId }, { teamMembers: { some: { userId } } }],
     };
 
+    const employeeWaitingTaskWhere = {
+      archivedAt: null,
+      assignedTo: userId,
+      status: 'waiting_on_client' as const,
+    };
+
     const [
       assignedTasks,
       assignedProjects,
@@ -240,6 +280,8 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
       unreadMessageCount,
       pendingApprovalCount,
       deliverablesNeedingUpload,
+      waitingOnClientCount,
+      waitingOnClientTasks,
     ] = await Promise.all([
         prisma.task.findMany({
           where: { archivedAt: null, assignedTo: userId, status: { not: 'complete' } },
@@ -282,14 +324,19 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
+        prisma.task.count({ where: employeeWaitingTaskWhere }),
+        prisma.task.findMany({
+          where: employeeWaitingTaskWhere,
+          orderBy: { updatedAt: 'desc' },
+          take: 6,
+          include: taskDeadlineInclude,
+        }),
       ]);
-
-    const waitingOnClient = assignedProjects.filter((p) => p.status === 'waiting_on_client').length;
 
     return success(res, {
       stats: {
         activeProjects: assignedProjects.length,
-        waitingOnClient,
+        waitingOnClient: waitingOnClientCount,
         pendingApprovals: pendingApprovalCount,
         unreadMessages: unreadMessageCount,
       },
@@ -297,6 +344,7 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
       assignedTasks: assignedTasks.map(mapDashboardTask),
       upcomingDeadlines: upcomingDeadlines.map(mapDashboardDeadline),
       recentFiles: deliverablesNeedingUpload.map(mapDashboardFile),
+      waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
     });
   } catch (err) {
     next(err);

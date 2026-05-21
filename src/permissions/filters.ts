@@ -19,21 +19,28 @@ export async function companyWhereForUser(user: User): Promise<Prisma.CompanyWhe
     return {
       OR: [
         { assignedSalesmanId: user.id },
+        { staffAssignments: { some: { userId: user.id } } },
         { projects: { some: { assignedSalesmanId: user.id } } },
       ],
     };
   }
   if (user.role === 'employee') {
     return {
-      projects: {
-        some: {
-          OR: [
-            { projectManagerId: user.id },
-            { teamMembers: { some: { userId: user.id } } },
-            { tasks: { some: { assignedTo: user.id } } },
-          ],
+      OR: [
+        { assignedProjectManagerId: user.id },
+        { staffAssignments: { some: { userId: user.id } } },
+        {
+          projects: {
+            some: {
+              OR: [
+                { projectManagerId: user.id },
+                { teamMembers: { some: { userId: user.id } } },
+                { tasks: { some: { assignedTo: user.id } } },
+              ],
+            },
+          },
         },
-      },
+      ],
     };
   }
   return { id: 'never' };

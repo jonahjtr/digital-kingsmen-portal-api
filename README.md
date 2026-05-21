@@ -146,3 +146,9 @@ wrangler.toml        # D1, vars, deploy config
 
 - D1 does not support transactions yet; Prisma runs queries individually.
 - PostgreSQL migrations in `prisma/migrations/` are archived; use `migrations/` for D1.
+
+### Staff client assignments
+
+Team management and the admin **Team** page list assignments from the `company_staff_assignments` table (`GET /api/users/:id/staff-assignments` for a user; `POST/DELETE /api/companies/:companyId/staff-assignments` to mutate).
+
+Legacy columns `assignedSalesmanId` and `assignedProjectManagerId` on `companies` are synced when assignments change, but **assignments that exist only in those legacy fields** (no row in `company_staff_assignments`) will not appear on the Team page until migrated. Use client hub staff editing or create assignment rows via the API to align data.
