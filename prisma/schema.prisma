@@ -20,6 +20,12 @@ enum CompanyStatus {
   prospect
 }
 
+enum MonthlyServiceStatus {
+  active
+  paused
+  cancelled
+}
+
 enum ProjectStatus {
   not_started
   in_progress
@@ -205,9 +211,31 @@ model Company {
   conversations          Conversation[]
   invites                Invite[]
   staffAssignments       CompanyStaffAssignment[]
+  monthlyServices        CompanyMonthlyService[]
 
   @@index([assignedSalesmanId])
   @@map("companies")
+}
+
+model CompanyMonthlyService {
+  id                 String               @id @default(uuid())
+  companyId          String               @map("company_id")
+  serviceCategory    String               @map("service_category")
+  label              String?
+  monthlyAmountCents Int                  @map("monthly_amount_cents")
+  currency           String               @default("USD")
+  status             MonthlyServiceStatus @default(active)
+  description        String?
+  startedAt          DateTime?            @map("started_at")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([serviceCategory])
+  @@index([status])
+  @@map("company_monthly_services")
 }
 
 model StaffTag {

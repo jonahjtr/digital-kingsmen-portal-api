@@ -298,6 +298,31 @@ async function main() {
       ],
     });
 
+    if (co.name === 'Pure Pest Solutions' || co.name === 'Summit Dental Group') {
+      await prisma.companyMonthlyService.createMany({
+        data: [
+          {
+            companyId: company.id,
+            serviceCategory: 'seo',
+            label: 'Monthly SEO',
+            monthlyAmountCents: 150000,
+            status: 'active',
+            description: 'Ongoing SEO management and reporting',
+            startedAt: new Date('2025-02-01'),
+          },
+          {
+            companyId: company.id,
+            serviceCategory: co.name === 'Pure Pest Solutions' ? 'google_ads' : 'meta_ads',
+            label: co.name === 'Pure Pest Solutions' ? 'Google Ads management' : 'Meta Ads',
+            monthlyAmountCents: co.name === 'Pure Pest Solutions' ? 80000 : 120000,
+            status: 'active',
+            description: 'Monthly ad spend management fee (excludes ad spend)',
+            startedAt: new Date('2025-03-01'),
+          },
+        ],
+      });
+    }
+
     let primaryProjectId: string | null = null;
 
     for (const svc of co.services) {

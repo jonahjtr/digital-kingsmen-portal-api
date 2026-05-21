@@ -21,6 +21,7 @@ import invitesRoutes from './invites.routes';
 import internalNotesRoutes from './internalNotes.routes';
 import callTranscriptionsRoutes from './callTranscriptions.routes';
 import staffTagsRoutes from './staffTags.routes';
+import monthlyServicesRoutes from './monthlyServices.routes';
 
 const router = Router();
 
@@ -46,5 +47,6 @@ router.use('/invites', invitesRoutes);
 router.use('/internal-notes', internalNotesRoutes);
 router.use('/call-transcriptions', callTranscriptionsRoutes);
 router.use('/staff-tags', staffTagsRoutes);
+router.use('/monthly-services', monthlyServicesRoutes);
 
 export default router;
