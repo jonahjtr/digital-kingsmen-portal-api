@@ -9,11 +9,24 @@ import { companyWhereForUser } from '../permissions/filters';
 import { textContains } from '../lib/searchFilter';
 
 const includeCompany = {
-  company: { select: { id: true, name: true, status: true } },
+  company: {
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      assignedSalesman: { select: { id: true, fullName: true, email: true } },
+    },
+  },
 } as const;
 
 function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
+}
+
+function payoutCentsFromBody(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return dollarsToCents(value as number);
 }
 
 function serializeMonthlyService(row: {
@@ -22,17 +35,28 @@ function serializeMonthlyService(row: {
   serviceCategory: string;
   label: string | null;
   monthlyAmountCents: number;
+  salesmanPayoutCents: number | null;
   currency: string;
   status: MonthlyServiceStatus;
   description: string | null;
   startedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
-  company?: { id: string; name: string; status: string };
+  company?: {
+    id: string;
+    name: string;
+    status: string;
+    assignedSalesman?: { id: string; fullName: string; email: string } | null;
+  };
 }) {
+  const monthlyAmount = row.monthlyAmountCents / 100;
+  const salesmanPayout =
+    row.salesmanPayoutCents != null ? row.salesmanPayoutCents / 100 : null;
   return {
     ...row,
-    monthlyAmount: row.monthlyAmountCents / 100,
+    monthlyAmount,
+    salesmanPayout,
+    netAmount: monthlyAmount - (salesmanPayout ?? 0),
   };
 }
 
@@ -51,11 +75,18 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
     const category = req.query.category as string | undefined;
     const status = req.query.status as MonthlyServiceStatus | undefined;
     const companyId = req.query.company_id as string | undefined;
+    const salesmanId = req.query.salesman_id as string | undefined;
     const search = req.query.search as string | undefined;
 
     if (category) where.serviceCategory = category;
     if (status) where.status = status;
     if (companyId) where.companyId = companyId;
+    if (salesmanId) {
+      where.company = {
+        ...(typeof where.company === 'object' ? where.company : {}),
+        assignedSalesmanId: salesmanId,
+      };
+    }
     if (search) {
       where.company = {
         ...(typeof where.company === 'object' ? where.company : {}),
@@ -103,6 +134,7 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
       service_category: serviceCategory,
       label,
       monthly_amount: monthlyAmount,
+      salesman_payout: salesmanPayout,
       currency = 'USD',
       status = 'active',
       description,
@@ -115,6 +147,7 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
         serviceCategory,
         label: label ?? null,
         monthlyAmountCents: dollarsToCents(monthlyAmount),
+        salesmanPayoutCents: payoutCentsFromBody(salesmanPayout) ?? null,
         currency: currency.toUpperCase(),
         status: status as MonthlyServiceStatus,
         description: description ?? null,
@@ -147,6 +180,9 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     if (body.label !== undefined) data.label = body.label;
     if (body.monthly_amount !== undefined) {
       data.monthlyAmountCents = dollarsToCents(body.monthly_amount);
+    }
+    if (body.salesman_payout !== undefined) {
+      data.salesmanPayoutCents = payoutCentsFromBody(body.salesman_payout) ?? null;
     }
     if (body.currency !== undefined) data.currency = body.currency.toUpperCase();
     if (body.status !== undefined) data.status = body.status;

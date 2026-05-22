@@ -223,6 +223,7 @@ model CompanyMonthlyService {
   serviceCategory    String               @map("service_category")
   label              String?
   monthlyAmountCents Int                  @map("monthly_amount_cents")
+  salesmanPayoutCents Int?               @map("salesman_payout_cents")
   currency           String               @default("USD")
   status             MonthlyServiceStatus @default(active)
   description        String?
