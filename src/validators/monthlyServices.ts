@@ -1,20 +1,26 @@
 import { z } from 'zod';
 
-export const MONTHLY_SERVICE_CATEGORIES = [
+/** Categories that appear on monthly revenue / salesman split views. */
+export const BILLABLE_REVENUE_CATEGORIES = [
+  'website',
   'seo',
-  'local_seo',
+  'social_media',
+  'website_maintenance',
   'google_ads',
   'meta_ads',
-  'google_business',
-  'content',
-  'other',
 ] as const;
 
+/** @deprecated Use BILLABLE_REVENUE_CATEGORIES */
+export const MONTHLY_SERVICE_CATEGORIES = BILLABLE_REVENUE_CATEGORIES;
+
+export const DEFAULT_SALESMAN_SPLIT_PERCENT = 30;
+
 export const createMonthlyServiceSchema = z.object({
-  service_category: z.enum(MONTHLY_SERVICE_CATEGORIES),
+  service_category: z.enum(BILLABLE_REVENUE_CATEGORIES),
   label: z.string().max(120).optional().nullable(),
   monthly_amount: z.number().positive().max(1_000_000),
   salesman_payout: z.number().min(0).max(1_000_000).optional().nullable(),
+  salesman_payout_override: z.boolean().optional(),
   currency: z.string().length(3).optional().default('USD'),
   status: z.enum(['active', 'paused', 'cancelled']).optional(),
   description: z.string().max(2000).optional().nullable(),
@@ -32,9 +38,12 @@ export const monthlyServiceIdParamSchema = z.object({
 });
 
 export const listMonthlyServicesQuerySchema = z.object({
-  category: z.enum(MONTHLY_SERVICE_CATEGORIES).optional(),
+  category: z.enum(BILLABLE_REVENUE_CATEGORIES).optional(),
   status: z.enum(['active', 'paused', 'cancelled']).optional(),
   search: z.string().max(200).optional(),
   company_id: z.string().uuid().optional(),
   salesman_id: z.string().uuid().optional(),
+  billable_only: z
+    .union([z.literal('true'), z.literal('false'), z.literal('1'), z.literal('0')])
+    .optional(),
 });

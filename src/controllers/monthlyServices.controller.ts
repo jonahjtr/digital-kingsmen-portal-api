@@ -7,6 +7,10 @@ import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessCompany, assertNotClient } from '../permissions/access';
 import { companyWhereForUser } from '../permissions/filters';
 import { textContains } from '../lib/searchFilter';
+import {
+  BILLABLE_REVENUE_CATEGORIES,
+  DEFAULT_SALESMAN_SPLIT_PERCENT,
+} from '../validators/monthlyServices';
 
 const includeCompany = {
   company: {
@@ -23,10 +27,36 @@ function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
 }
 
+function computeDefaultPayoutCents(monthlyAmountCents: number): number {
+  return Math.round(monthlyAmountCents * (DEFAULT_SALESMAN_SPLIT_PERCENT / 100));
+}
+
 function payoutCentsFromBody(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
   return dollarsToCents(value as number);
+}
+
+function parseBillableOnly(query: unknown): boolean {
+  if (query === undefined || query === null || query === '') return true;
+  return query === 'true' || query === '1';
+}
+
+function resolvePayoutOnWrite(
+  monthlyAmountCents: number,
+  override: boolean,
+  explicitPayoutCents: number | null | undefined,
+): { salesmanPayoutCents: number | null; salesmanPayoutOverride: boolean } {
+  if (override) {
+    return {
+      salesmanPayoutCents: explicitPayoutCents ?? null,
+      salesmanPayoutOverride: true,
+    };
+  }
+  return {
+    salesmanPayoutCents: computeDefaultPayoutCents(monthlyAmountCents),
+    salesmanPayoutOverride: false,
+  };
 }
 
 function serializeMonthlyService(row: {
@@ -36,6 +66,7 @@ function serializeMonthlyService(row: {
   label: string | null;
   monthlyAmountCents: number;
   salesmanPayoutCents: number | null;
+  salesmanPayoutOverride: boolean;
   currency: string;
   status: MonthlyServiceStatus;
   description: string | null;
@@ -50,13 +81,26 @@ function serializeMonthlyService(row: {
   };
 }) {
   const monthlyAmount = row.monthlyAmountCents / 100;
-  const salesmanPayout =
-    row.salesmanPayoutCents != null ? row.salesmanPayoutCents / 100 : null;
+  const defaultSalesmanPayout = computeDefaultPayoutCents(row.monthlyAmountCents) / 100;
+  const salesmanPayout = row.salesmanPayoutOverride
+    ? row.salesmanPayoutCents != null
+      ? row.salesmanPayoutCents / 100
+      : null
+    : defaultSalesmanPayout;
+  const effectivePayout = salesmanPayout ?? 0;
+  const salesmanSplitPercent =
+    row.salesmanPayoutOverride && monthlyAmount > 0 && salesmanPayout != null
+      ? Math.round((salesmanPayout / monthlyAmount) * 1000) / 10
+      : DEFAULT_SALESMAN_SPLIT_PERCENT;
+
   return {
     ...row,
     monthlyAmount,
+    defaultSalesmanPayout,
     salesmanPayout,
-    netAmount: monthlyAmount - (salesmanPayout ?? 0),
+    salesmanPayoutOverride: row.salesmanPayoutOverride,
+    salesmanSplitPercent,
+    netAmount: monthlyAmount - effectivePayout,
   };
 }
 
@@ -77,10 +121,14 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
     const companyId = req.query.company_id as string | undefined;
     const salesmanId = req.query.salesman_id as string | undefined;
     const search = req.query.search as string | undefined;
+    const billableOnly = parseBillableOnly(req.query.billable_only);
 
     if (category) where.serviceCategory = category;
     if (status) where.status = status;
     if (companyId) where.companyId = companyId;
+    if (billableOnly) {
+      where.serviceCategory = { in: [...BILLABLE_REVENUE_CATEGORIES] };
+    }
     if (salesmanId) {
       where.company = {
         ...(typeof where.company === 'object' ? where.company : {}),
@@ -112,8 +160,15 @@ export async function listForCompany(req: Request, res: Response, next: NextFunc
     const companyId = getParam(req, 'companyId');
     await assertCanAccessCompany(req.user!, companyId);
 
+    const billableOnly = parseBillableOnly(req.query.billable_only);
+
     const rows = await prisma.companyMonthlyService.findMany({
-      where: { companyId },
+      where: {
+        companyId,
+        ...(billableOnly
+          ? { serviceCategory: { in: [...BILLABLE_REVENUE_CATEGORIES] } }
+          : {}),
+      },
       include: includeCompany,
       orderBy: [{ status: 'asc' }, { serviceCategory: 'asc' }],
     });
@@ -135,19 +190,28 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
       label,
       monthly_amount: monthlyAmount,
       salesman_payout: salesmanPayout,
+      salesman_payout_override: payoutOverride = false,
       currency = 'USD',
       status = 'active',
       description,
       started_at: startedAtRaw,
     } = req.body;
 
+    const monthlyAmountCents = dollarsToCents(monthlyAmount);
+    const payout = resolvePayoutOnWrite(
+      monthlyAmountCents,
+      !!payoutOverride,
+      payoutCentsFromBody(salesmanPayout),
+    );
+
     const row = await prisma.companyMonthlyService.create({
       data: {
         companyId,
         serviceCategory,
         label: label ?? null,
-        monthlyAmountCents: dollarsToCents(monthlyAmount),
-        salesmanPayoutCents: payoutCentsFromBody(salesmanPayout) ?? null,
+        monthlyAmountCents,
+        salesmanPayoutCents: payout.salesmanPayoutCents,
+        salesmanPayoutOverride: payout.salesmanPayoutOverride,
         currency: currency.toUpperCase(),
         status: status as MonthlyServiceStatus,
         description: description ?? null,
@@ -173,23 +237,44 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
     await assertCanAccessCompany(req.user!, existing.companyId);
 
-    const data: Prisma.CompanyMonthlyServiceUpdateInput = {};
     const body = req.body;
+    const monthlyAmountCents =
+      body.monthly_amount !== undefined
+        ? dollarsToCents(body.monthly_amount)
+        : existing.monthlyAmountCents;
 
-    if (body.service_category !== undefined) data.serviceCategory = body.service_category;
-    if (body.label !== undefined) data.label = body.label;
-    if (body.monthly_amount !== undefined) {
-      data.monthlyAmountCents = dollarsToCents(body.monthly_amount);
+    let payoutOverride = existing.salesmanPayoutOverride;
+    if (body.salesman_payout_override !== undefined) {
+      payoutOverride = !!body.salesman_payout_override;
     }
+
+    let salesmanPayoutCents = existing.salesmanPayoutCents;
     if (body.salesman_payout !== undefined) {
-      data.salesmanPayoutCents = payoutCentsFromBody(body.salesman_payout) ?? null;
+      salesmanPayoutCents = payoutCentsFromBody(body.salesman_payout) ?? null;
+      payoutOverride = true;
+    } else if (
+      body.monthly_amount !== undefined ||
+      body.salesman_payout_override === false
+    ) {
+      if (!payoutOverride || body.salesman_payout_override === false) {
+        payoutOverride = false;
+        salesmanPayoutCents = computeDefaultPayoutCents(monthlyAmountCents);
+      }
     }
-    if (body.currency !== undefined) data.currency = body.currency.toUpperCase();
-    if (body.status !== undefined) data.status = body.status;
-    if (body.description !== undefined) data.description = body.description;
-    if (body.started_at !== undefined) {
-      data.startedAt = body.started_at ? new Date(body.started_at) : null;
-    }
+
+    const data: Prisma.CompanyMonthlyServiceUpdateInput = {
+      ...(body.service_category !== undefined && { serviceCategory: body.service_category }),
+      ...(body.label !== undefined && { label: body.label }),
+      ...(body.monthly_amount !== undefined && { monthlyAmountCents }),
+      salesmanPayoutCents,
+      salesmanPayoutOverride: payoutOverride,
+      ...(body.currency !== undefined && { currency: body.currency.toUpperCase() }),
+      ...(body.status !== undefined && { status: body.status }),
+      ...(body.description !== undefined && { description: body.description }),
+      ...(body.started_at !== undefined && {
+        startedAt: body.started_at ? new Date(body.started_at) : null,
+      }),
+    };
 
     const row = await prisma.companyMonthlyService.update({
       where: { id },
