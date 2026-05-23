@@ -151,6 +151,7 @@ model User {
   projectUpdates            ProjectUpdate[]
   conversationMembers       ConversationMember[]
   messagesSent              Message[]
+  messageMentions           MessageMention[]
   filesUploaded             File[]
   approvalsRequested        Approval[]           @relation("ApprovalRequester")
   approvalsReviewed         Approval[]           @relation("ApprovalReviewer")
@@ -512,9 +513,23 @@ model Message {
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation(fields: [senderId], references: [id])
+  mentions     MessageMention[]
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+model MessageMention {
+  id        String @id @default(uuid())
+  messageId String @map("message_id")
+  userId    String @map("user_id")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_mentions")
 }
 
 model File {

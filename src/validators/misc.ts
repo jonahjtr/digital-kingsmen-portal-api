@@ -13,6 +13,7 @@ export { createConversationSchema } from './conversations';
 export const createMessageSchema = z.object({
   message: z.string().min(1),
   internal_only: z.boolean().optional(),
+  mentioned_user_ids: z.array(z.string().uuid()).max(20).optional(),
 });
 
 export const createApprovalSchema = z.object({

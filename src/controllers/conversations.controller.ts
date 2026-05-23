@@ -5,9 +5,14 @@ import { success, created, buildMeta, parsePagination } from '../lib/apiResponse
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject } from '../permissions/access';
 import { messageInternalFilter } from '../permissions/filters';
-import { mapMessageItem } from '../services/conversations.mapper';
 import { broadcastConversation } from '../party/broadcast';
-import { createNotification } from '../services/notification.service';
+import { createNotification, notifyUsers } from '../services/notification.service';
+import {
+  buildMentionCreates,
+  mapMessageWithMentions,
+  messageWithMentionsInclude,
+  resolveMentionedUserIds,
+} from '../services/message-mentions.service';
 import {
   mapConversationWithUnread,
   markConversationRead as markConversationReadService,
@@ -122,20 +127,11 @@ export async function listMessages(req: Request, res: Response, next: NextFuncti
         skip,
         take: limit,
         orderBy: { createdAt: 'asc' },
-        include: { sender: { select: { id: true, fullName: true, avatarUrl: true } } },
+        include: messageWithMentionsInclude,
       }),
       prisma.message.count({ where }),
     ]);
-    await prisma.message.updateMany({
-      where: {
-        conversationId,
-        readAt: null,
-        senderId: { not: req.user!.id },
-        ...messageInternalFilter(req.user!),
-      },
-      data: { readAt: new Date() },
-    });
-    return success(res, messages.map(mapMessageItem), 200, buildMeta(page, limit, total));
+    return success(res, messages.map(mapMessageWithMentions), 200, buildMeta(page, limit, total));
   } catch (err) {
     next(err);
   }
@@ -143,8 +139,12 @@ export async function listMessages(req: Request, res: Response, next: NextFuncti
 
 export async function sendMessage(req: Request, res: Response, next: NextFunction) {
   try {
+    const conversationId = getParam(req, 'id');
     const conversation = await prisma.conversation.findFirst({
-      where: { id: getParam(req, 'id'), members: { some: { userId: req.user!.id } } },
+      where: { id: conversationId, members: { some: { userId: req.user!.id } } },
+      include: {
+        members: { include: { user: { select: { id: true, role: true, fullName: true } } } },
+      },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
     if (req.user!.role === 'client' && conversation.type !== 'client_project') {
@@ -153,42 +153,61 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     const body = req.body;
     let internalOnly = body.internal_only ?? false;
     if (req.user!.role === 'client') internalOnly = false;
-    const conversationId = getParam(req, 'id');
+
+    const mentionedUserIds = resolveMentionedUserIds(
+      body.mentioned_user_ids,
+      conversation.members,
+      req.user!.id,
+      internalOnly,
+    );
+    const mentionCreates = buildMentionCreates(mentionedUserIds);
+
     const message = await prisma.message.create({
       data: {
         conversationId,
         senderId: req.user!.id,
         message: body.message,
         internalOnly,
+        mentions: mentionCreates.length
+          ? { create: mentionCreates }
+          : undefined,
       },
-      include: { sender: { select: { id: true, fullName: true, avatarUrl: true } } },
+      include: messageWithMentionsInclude,
     });
+    const mapped = mapMessageWithMentions(message);
+
     await prisma.conversation.update({
       where: { id: conversationId },
       data: { updatedAt: new Date() },
     });
     await broadcastConversation(conversationId, {
       type: 'message.created',
-      payload: message,
+      payload: mapped,
       tags: internalOnly ? ['staff'] : undefined,
     });
 
-    const members = await prisma.conversationMember.findMany({
-      where: { conversationId },
-      include: { user: { select: { id: true, role: true } } },
-    });
     const preview = body.message.slice(0, 120);
-    const title = 'New message';
+    const senderName = req.user!.fullName ?? 'Someone';
     await Promise.all(
-      members
+      conversation.members
         .filter((m) => m.userId !== req.user!.id)
         .filter((m) => !(internalOnly && m.user.role === 'client'))
+        .filter((m) => !mentionedUserIds.includes(m.userId))
         .map((m) =>
-          createNotification(m.userId, title, preview, 'message').catch(() => undefined),
+          createNotification(m.userId, 'New message', preview, 'message').catch(() => undefined),
         ),
     );
 
-    return created(res, mapMessageItem(message));
+    if (mentionedUserIds.length > 0) {
+      await notifyUsers(
+        mentionedUserIds,
+        'You were mentioned',
+        `${senderName}: ${preview}`,
+        'mention',
+      );
+    }
+
+    return created(res, mapped);
   } catch (err) {
     next(err);
   }
