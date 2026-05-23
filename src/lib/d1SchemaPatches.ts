@@ -48,6 +48,7 @@ export async function applyD1SchemaPatches(db: D1Database): Promise<void> {
     'ALTER TABLE "invites" ADD COLUMN "reusable" INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE "company_monthly_services" ADD COLUMN "salesman_payout_cents" INTEGER',
     'ALTER TABLE "company_monthly_services" ADD COLUMN "salesman_payout_override" INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE "conversation_members" ADD COLUMN "last_read_at" DATETIME',
   ];
 
   for (const sql of patches) {
