@@ -117,16 +117,28 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
     const where: Prisma.CompanyMonthlyServiceWhereInput = await monthlyServiceWhereForUser(req);
 
     const category = req.query.category as string | undefined;
+    const categoriesRaw = req.query.categories as string | undefined;
+    const categoryIds = categoriesRaw
+      ? categoriesRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((id): id is (typeof BILLABLE_REVENUE_CATEGORIES)[number] =>
+            (BILLABLE_REVENUE_CATEGORIES as readonly string[]).includes(id),
+          )
+      : [];
     const status = req.query.status as MonthlyServiceStatus | undefined;
     const companyId = req.query.company_id as string | undefined;
     const salesmanId = req.query.salesman_id as string | undefined;
     const search = req.query.search as string | undefined;
     const billableOnly = parseBillableOnly(req.query.billable_only);
 
-    if (category) where.serviceCategory = category;
     if (status) where.status = status;
     if (companyId) where.companyId = companyId;
-    if (billableOnly) {
+    if (categoryIds.length > 0) {
+      where.serviceCategory = { in: categoryIds };
+    } else if (category) {
+      where.serviceCategory = category;
+    } else if (billableOnly) {
       where.serviceCategory = { in: [...BILLABLE_REVENUE_CATEGORIES] };
     }
     if (salesmanId) {

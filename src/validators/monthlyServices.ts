@@ -1,13 +1,12 @@
 import { z } from 'zod';
 
-/** Categories that appear on monthly revenue / salesman split views. */
+/** Recurring retainers (MRR) — not one-time setup projects. */
 export const BILLABLE_REVENUE_CATEGORIES = [
-  'website',
   'seo',
   'social_media',
-  'website_maintenance',
   'google_ads',
   'meta_ads',
+  'website_maintenance',
 ] as const;
 
 /** @deprecated Use BILLABLE_REVENUE_CATEGORIES */
@@ -39,6 +38,8 @@ export const monthlyServiceIdParamSchema = z.object({
 
 export const listMonthlyServicesQuerySchema = z.object({
   category: z.enum(BILLABLE_REVENUE_CATEGORIES).optional(),
+  /** Comma-separated category ids, e.g. seo,google_ads */
+  categories: z.string().max(200).optional(),
   status: z.enum(['active', 'paused', 'cancelled']).optional(),
   search: z.string().max(200).optional(),
   company_id: z.string().uuid().optional(),

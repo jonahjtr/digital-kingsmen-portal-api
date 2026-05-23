@@ -16,6 +16,7 @@ import { textContains } from '../lib/searchFilter';
 import * as nudgeService from '../services/nudge.service';
 import * as progressService from '../services/progress.service';
 import { mapNestedCompanyLogo } from '../lib/companyResponse';
+import { projectListStatusWhere, resolveProjectSortField } from '../lib/projectListFilters';
 
 const companySelect = { id: true, name: true, logoUrl: true } as const;
 
@@ -47,19 +48,21 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     if (companyId) await assertCanAccessCompany(req.user!, companyId);
     if (projectId) await assertCanAccessProject(req.user!, projectId);
     const scope = await projectWhereForUser(req.user!);
+    const statusFilter = projectListStatusWhere(status);
     const where = {
       ...scope,
       ...(companyId ? { companyId } : {}),
       ...(projectId ? { id: projectId } : {}),
-      ...(status ? { status: status as never } : {}),
+      ...statusFilter,
       ...(search ? { name: textContains(search) } : {}),
     };
+    const orderField = resolveProjectSortField(sortBy);
     const [projects, total] = await Promise.all([
       prisma.project.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { [sortBy]: sortOrder },
+        orderBy: { [orderField]: sortOrder },
         include: {
           company: { select: companySelect },
           services: { select: { id: true, serviceName: true, progress: true, status: true } },
