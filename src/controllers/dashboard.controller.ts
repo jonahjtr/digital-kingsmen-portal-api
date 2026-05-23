@@ -17,6 +17,10 @@ import {
   mapDashboardTask,
   mapDashboardUpdate,
 } from '../services/dashboard.service';
+import {
+  recentConversationsForUser,
+  totalUnreadForUser,
+} from '../services/conversation-read.service';
 
 const projectInclude = { company: { select: { id: true, name: true, logoUrl: true } } };
 const taskDeadlineInclude = { project: { select: { name: true } } };
@@ -42,6 +46,7 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
       waitingOnClientTasks,
       pendingApprovalCount,
       unreadMessageCount,
+      recentConversations,
       projects,
       recentUpdates,
       upcomingDeadlines,
@@ -57,7 +62,8 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
         include: taskDeadlineInclude,
       }),
       prisma.approval.count({ where: { status: 'waiting_for_client' } }),
-      prisma.message.count({ where: { readAt: null } }),
+      totalUnreadForUser(req.user!),
+      recentConversationsForUser(req.user!),
       prisma.project.findMany({
         where: activeWhere,
         orderBy: { updatedAt: 'desc' },
@@ -100,6 +106,7 @@ export async function admin(req: Request, res: Response, next: NextFunction) {
       pendingApprovals: pendingApprovals.map(mapDashboardApproval),
       recentFiles: recentFiles.map(mapDashboardFile),
       waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
+      recentConversations,
     });
   } catch (err) {
     next(err);
@@ -122,6 +129,7 @@ export async function client(req: Request, res: Response, next: NextFunction) {
       approvalsNeeded,
       recentFiles,
       unreadMessageCount,
+      recentConversations,
     ] = await Promise.all([
       prisma.project.findMany({
         where: activeWhere,
@@ -151,17 +159,8 @@ export async function client(req: Request, res: Response, next: NextFunction) {
         orderBy: { createdAt: 'desc' },
         take: 10,
       }),
-      prisma.message.count({
-        where: {
-          readAt: null,
-          internalOnly: false,
-          senderId: { not: req.user!.id },
-          conversation: {
-            members: { some: { userId: req.user!.id } },
-            type: 'client_project',
-          },
-        },
-      }),
+      totalUnreadForUser(req.user!),
+      recentConversationsForUser(req.user!),
     ]);
 
     const needsFromClient = waitingOnClient.map((p) => ({
@@ -182,6 +181,7 @@ export async function client(req: Request, res: Response, next: NextFunction) {
       needsFromClient,
       pendingApprovals: approvalsNeeded.map(mapDashboardApproval),
       recentFiles: recentFiles.map(mapDashboardFile),
+      recentConversations,
     });
   } catch (err) {
     next(err);
@@ -203,6 +203,7 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
       latestUpdates,
       pendingApprovals,
       unreadMessageCount,
+      recentConversations,
       waitingOnClientCount,
       waitingOnClientTasks,
     ] = await Promise.all([
@@ -222,13 +223,8 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
         orderBy: { createdAt: 'desc' },
         take: 10,
       }),
-      prisma.message.count({
-        where: {
-          readAt: null,
-          senderId: { not: req.user!.id },
-          conversation: { members: { some: { userId: req.user!.id } } },
-        },
-      }),
+      totalUnreadForUser(req.user!),
+      recentConversationsForUser(req.user!),
       prisma.task.count({ where: waitingTaskWhere }),
       prisma.task.findMany({
         where: waitingTaskWhere,
@@ -249,6 +245,7 @@ export async function salesman(req: Request, res: Response, next: NextFunction) 
       recentUpdates: latestUpdates.map(mapDashboardUpdate),
       pendingApprovals: pendingApprovals.map(mapDashboardApproval),
       waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
+      recentConversations,
     });
   } catch (err) {
     next(err);
@@ -278,6 +275,7 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
       assignedProjects,
       upcomingDeadlines,
       unreadMessageCount,
+      recentConversations,
       pendingApprovalCount,
       deliverablesNeedingUpload,
       waitingOnClientCount,
@@ -305,14 +303,8 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
           take: 10,
           include: taskDeadlineInclude,
         }),
-        prisma.message.count({
-          where: {
-            readAt: null,
-            internalOnly: true,
-            senderId: { not: userId },
-            conversation: { members: { some: { userId } } },
-          },
-        }),
+        totalUnreadForUser(req.user!),
+        recentConversationsForUser(req.user!),
         prisma.approval.count({
           where: { project: projectScope, status: 'waiting_for_client' },
         }),
@@ -345,6 +337,7 @@ export async function employee(req: Request, res: Response, next: NextFunction) 
       upcomingDeadlines: upcomingDeadlines.map(mapDashboardDeadline),
       recentFiles: deliverablesNeedingUpload.map(mapDashboardFile),
       waitingOnClientTasks: waitingOnClientTasks.map(mapDashboardTask),
+      recentConversations,
     });
   } catch (err) {
     next(err);

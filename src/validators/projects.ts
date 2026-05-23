@@ -12,8 +12,8 @@ export const createProjectSchema = z.object({
   description: z.string().optional(),
   status: projectStatus.optional(),
   priority: priority.optional(),
-  start_date: z.string().datetime().optional(),
-  due_date: z.string().datetime().optional(),
+  start_date: z.string().datetime().nullable().optional(),
+  due_date: z.string().datetime().nullable().optional(),
   assigned_salesman_id: z.string().uuid().optional(),
   project_manager_id: z.string().uuid().optional(),
   client_facing_notes: z.string().optional(),
@@ -41,7 +41,7 @@ export const createServiceStepSchema = z.object({
     'client_review', 'complete', 'skipped',
   ]).optional(),
   sort_order: z.number().int().optional(),
-  due_date: z.string().datetime().optional(),
+  due_date: z.string().datetime().nullable().optional(),
 });
 
 export const updateServiceStepSchema = createServiceStepSchema.partial();

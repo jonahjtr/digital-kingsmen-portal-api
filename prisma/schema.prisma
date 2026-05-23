@@ -232,12 +232,32 @@ model CompanyMonthlyService {
   createdAt          DateTime             @default(now()) @map("created_at")
   updatedAt          DateTime             @updatedAt @map("updated_at")
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company  Company                        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenses CompanyMonthlyServiceExpense[]
 
   @@index([companyId])
   @@index([serviceCategory])
   @@index([status])
   @@map("company_monthly_services")
+}
+
+model CompanyMonthlyServiceExpense {
+  id               String   @id @default(uuid())
+  monthlyServiceId String   @map("monthly_service_id")
+  name             String
+  vendor           String?
+  expenseType      String   @default("contractor") @map("expense_type")
+  amountCents      Int      @map("amount_cents")
+  currency         String   @default("USD")
+  isRecurring      Boolean  @default(true) @map("is_recurring")
+  notes            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  monthlyService CompanyMonthlyService @relation(fields: [monthlyServiceId], references: [id], onDelete: Cascade)
+
+  @@index([monthlyServiceId])
+  @@map("company_monthly_service_expenses")
 }
 
 model StaffTag {
@@ -468,10 +488,11 @@ model Conversation {
 }
 
 model ConversationMember {
-  id             String   @id @default(uuid())
-  conversationId String   @map("conversation_id")
-  userId         String   @map("user_id")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  userId         String    @map("user_id")
+  lastReadAt     DateTime? @map("last_read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)

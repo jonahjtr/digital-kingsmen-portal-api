@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-/** Recurring retainers (MRR) — not one-time setup projects. */
+/**
+ * Recurring monthly retainers only (MRR). IDs must match
+ * `MONTHLY_SERVICE_CATEGORY_IDS` in digital-kingsmen-connect `src/lib/service-catalog.ts`.
+ */
 export const BILLABLE_REVENUE_CATEGORIES = [
   'seo',
   'social_media',

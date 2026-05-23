@@ -31,8 +31,12 @@ function mapProjectBody(body: Record<string, unknown>) {
   if (body.description !== undefined) data.description = body.description;
   if (body.status) data.status = body.status;
   if (body.priority) data.priority = body.priority;
-  if (body.start_date) data.startDate = new Date(body.start_date as string);
-  if (body.due_date) data.dueDate = new Date(body.due_date as string);
+  if (body.start_date !== undefined) {
+    data.startDate = body.start_date ? new Date(body.start_date as string) : null;
+  }
+  if (body.due_date !== undefined) {
+    data.dueDate = body.due_date ? new Date(body.due_date as string) : null;
+  }
   if (body.assigned_salesman_id !== undefined) data.assignedSalesmanId = body.assigned_salesman_id;
   if (body.project_manager_id !== undefined) data.projectManagerId = body.project_manager_id;
   if (body.overall_progress !== undefined) data.overallProgress = body.overall_progress;

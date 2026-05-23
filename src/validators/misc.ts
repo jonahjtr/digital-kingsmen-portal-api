@@ -8,12 +8,7 @@ export const createInviteSchema = z.object({
   send_email: z.coerce.boolean().optional().default(false),
 });
 
-export const createConversationSchema = z.object({
-  project_id: z.string().uuid().optional(),
-  company_id: z.string().uuid().optional(),
-  type: z.enum(['client_project', 'internal_project', 'admin_salesman', 'admin_employee']),
-  member_ids: z.array(z.string().uuid()).optional(),
-});
+export { createConversationSchema } from './conversations';
 
 export const createMessageSchema = z.object({
   message: z.string().min(1),

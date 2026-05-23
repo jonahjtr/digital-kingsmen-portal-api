@@ -2,7 +2,8 @@ import { Router } from 'express';
 import * as conversationsController from '../controllers/conversations.controller';
 import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
-import { createConversationSchema, createMessageSchema } from '../validators/misc';
+import { createMessageSchema } from '../validators/misc';
+import { createConversationSchema, markConversationReadSchema } from '../validators/conversations';
 import { idParamSchema } from '../validators/common';
 
 const router = Router();
@@ -13,6 +14,12 @@ router.get('/:id', validate(idParamSchema, 'params'), conversationsController.ge
 router.post('/', validate(createConversationSchema), conversationsController.create);
 router.get('/:id/messages', validate(idParamSchema, 'params'), conversationsController.listMessages);
 router.post('/:id/messages', validate(idParamSchema, 'params'), validate(createMessageSchema), conversationsController.sendMessage);
+router.patch(
+  '/:id/read',
+  validate(idParamSchema, 'params'),
+  validate(markConversationReadSchema),
+  conversationsController.markConversationRead,
+);
 
 export const messageRoutes = Router();
 messageRoutes.use(authenticate);

@@ -3,36 +3,54 @@ import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, created, buildMeta, parsePagination } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { assertCanAccessProject, assertNotClient } from '../permissions/access';
+import { assertCanAccessProject } from '../permissions/access';
 import { messageInternalFilter } from '../permissions/filters';
-import { mapConversationListItem, mapMessageItem } from '../services/conversations.mapper';
+import { mapMessageItem } from '../services/conversations.mapper';
 import { broadcastConversation } from '../party/broadcast';
 import { createNotification } from '../services/notification.service';
+import {
+  mapConversationWithUnread,
+  markConversationRead as markConversationReadService,
+} from '../services/conversation-read.service';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.id;
-    const unreadWhere = {
-      readAt: null,
-      senderId: { not: userId },
-      ...messageInternalFilter(req.user!),
-    };
+    const user = req.user!;
     const conversations = await prisma.conversation.findMany({
       where: { members: { some: { userId } } },
       include: {
-        members: { include: { user: { select: { id: true, fullName: true } } } },
+        members: { where: { userId }, take: 1 },
         messages: { take: 1, orderBy: { createdAt: 'desc' } },
         project: { select: { id: true, name: true } },
         company: { select: { id: true, name: true } },
-        _count: { select: { messages: { where: unreadWhere } } },
       },
       orderBy: { updatedAt: 'desc' },
     });
     const filtered =
-      req.user!.role === 'client'
+      user.role === 'client'
         ? conversations.filter((c) => c.type === 'client_project')
         : conversations;
-    return success(res, filtered.map(mapConversationListItem));
+
+    const mapped = await Promise.all(
+      filtered.map((c) => {
+        const member = c.members[0];
+        return mapConversationWithUnread(
+          {
+            id: c.id,
+            type: c.type,
+            updatedAt: c.updatedAt,
+            project: c.project,
+            company: c.company,
+            messages: c.messages,
+          },
+          user,
+          member?.lastReadAt ?? null,
+        );
+      }),
+    );
+
+    return success(res, mapped);
   } catch (err) {
     next(err);
   }
@@ -176,6 +194,31 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
   }
 }
 
+export async function markConversationRead(req: Request, res: Response, next: NextFunction) {
+  try {
+    const conversationId = getParam(req, 'id');
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, members: { some: { userId: req.user!.id } } },
+    });
+    if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
+    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
+    }
+
+    const messageId = req.body?.message_id as string | undefined;
+    const lastReadAt = await markConversationReadService(conversationId, req.user!, messageId);
+
+    return success(res, { conversationId, lastReadAt });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'NOT_MEMBER') {
+      next(new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403));
+      return;
+    }
+    next(err);
+  }
+}
+
+/** @deprecated Prefer PATCH /conversations/:id/read — global per-message read */
 export async function markMessageRead(req: Request, res: Response, next: NextFunction) {
   try {
     const message = await prisma.message.findUnique({

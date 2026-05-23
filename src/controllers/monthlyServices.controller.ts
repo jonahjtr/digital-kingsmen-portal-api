@@ -21,7 +21,48 @@ const includeCompany = {
       assignedSalesman: { select: { id: true, fullName: true, email: true } },
     },
   },
+  expenses: {
+    orderBy: { name: 'asc' as const },
+  },
 } as const;
+
+function serializeExpense(row: {
+  id: string;
+  monthlyServiceId: string;
+  name: string;
+  vendor: string | null;
+  expenseType: string;
+  amountCents: number;
+  currency: string;
+  isRecurring: boolean;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: row.id,
+    monthlyServiceId: row.monthlyServiceId,
+    name: row.name,
+    vendor: row.vendor,
+    expenseType: row.expenseType,
+    amountCents: row.amountCents,
+    amount: row.amountCents / 100,
+    currency: row.currency,
+    isRecurring: row.isRecurring,
+    notes: row.notes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function sumRecurringExpenseCents(
+  expenses: { amountCents: number; isRecurring: boolean }[],
+): number {
+  return expenses.reduce(
+    (sum, e) => sum + (e.isRecurring ? e.amountCents : 0),
+    0,
+  );
+}
 
 function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
@@ -79,6 +120,19 @@ function serializeMonthlyService(row: {
     status: string;
     assignedSalesman?: { id: string; fullName: string; email: string } | null;
   };
+  expenses?: {
+    id: string;
+    monthlyServiceId: string;
+    name: string;
+    vendor: string | null;
+    expenseType: string;
+    amountCents: number;
+    currency: string;
+    isRecurring: boolean;
+    notes: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
 }) {
   const monthlyAmount = row.monthlyAmountCents / 100;
   const defaultSalesmanPayout = computeDefaultPayoutCents(row.monthlyAmountCents) / 100;
@@ -88,20 +142,38 @@ function serializeMonthlyService(row: {
       : null
     : defaultSalesmanPayout;
   const effectivePayout = salesmanPayout ?? 0;
+  const expenses = row.expenses ?? [];
+  const totalExpensesCents = sumRecurringExpenseCents(expenses);
+  const totalExpenses = totalExpensesCents / 100;
   const salesmanSplitPercent =
     row.salesmanPayoutOverride && monthlyAmount > 0 && salesmanPayout != null
       ? Math.round((salesmanPayout / monthlyAmount) * 1000) / 10
       : DEFAULT_SALESMAN_SPLIT_PERCENT;
 
+  const { expenses: _rawExpenses, ...rest } = row;
+
   return {
-    ...row,
+    ...rest,
     monthlyAmount,
     defaultSalesmanPayout,
     salesmanPayout,
     salesmanPayoutOverride: row.salesmanPayoutOverride,
     salesmanSplitPercent,
-    netAmount: monthlyAmount - effectivePayout,
+    expenses: expenses.map(serializeExpense),
+    totalExpensesCents,
+    totalExpenses,
+    netAmount: monthlyAmount - effectivePayout - totalExpenses,
   };
+}
+
+async function getMonthlyServiceIfAccessible(req: Request, id: string) {
+  const existing = await prisma.companyMonthlyService.findUnique({
+    where: { id },
+    include: includeCompany,
+  });
+  if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
+  await assertCanAccessCompany(req.user!, existing.companyId);
+  return existing;
 }
 
 async function monthlyServiceWhereForUser(req: Request): Promise<Prisma.CompanyMonthlyServiceWhereInput> {
@@ -242,12 +314,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
     const id = getParam(req, 'id');
-    const existing = await prisma.companyMonthlyService.findUnique({
-      where: { id },
-      include: { company: true },
-    });
-    if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
-    await assertCanAccessCompany(req.user!, existing.companyId);
+    const existing = await getMonthlyServiceIfAccessible(req, id);
 
     const body = req.body;
     const monthlyAmountCents =
@@ -304,11 +371,99 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
     const id = getParam(req, 'id');
-    const existing = await prisma.companyMonthlyService.findUnique({ where: { id } });
-    if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
-    await assertCanAccessCompany(req.user!, existing.companyId);
+    await getMonthlyServiceIfAccessible(req, id);
 
     await prisma.companyMonthlyService.delete({ where: { id } });
+    return success(res, { deleted: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listExpenses(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertNotClient(req.user!);
+    const service = await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
+    return success(res, service.expenses.map(serializeExpense));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createExpense(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertNotClient(req.user!);
+    const service = await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
+    const {
+      name,
+      vendor,
+      expense_type: expenseType = 'contractor',
+      amount,
+      currency = service.currency,
+      is_recurring: isRecurring = true,
+      notes,
+    } = req.body;
+
+    const row = await prisma.companyMonthlyServiceExpense.create({
+      data: {
+        monthlyServiceId: service.id,
+        name,
+        vendor: vendor ?? null,
+        expenseType,
+        amountCents: dollarsToCents(amount),
+        currency: String(currency).toUpperCase(),
+        isRecurring: !!isRecurring,
+        notes: notes ?? null,
+      },
+    });
+
+    return created(res, serializeExpense(row));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateExpense(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertNotClient(req.user!);
+    await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
+    const expenseId = getParam(req, 'expenseId');
+    const existing = await prisma.companyMonthlyServiceExpense.findFirst({
+      where: { id: expenseId, monthlyServiceId: getParam(req, 'id') },
+    });
+    if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Expense not found', 404);
+
+    const body = req.body;
+    const row = await prisma.companyMonthlyServiceExpense.update({
+      where: { id: expenseId },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.vendor !== undefined && { vendor: body.vendor ?? null }),
+        ...(body.expense_type !== undefined && { expenseType: body.expense_type }),
+        ...(body.amount !== undefined && { amountCents: dollarsToCents(body.amount) }),
+        ...(body.currency !== undefined && { currency: body.currency.toUpperCase() }),
+        ...(body.is_recurring !== undefined && { isRecurring: !!body.is_recurring }),
+        ...(body.notes !== undefined && { notes: body.notes ?? null }),
+      },
+    });
+
+    return success(res, serializeExpense(row));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeExpense(req: Request, res: Response, next: NextFunction) {
+  try {
+    assertNotClient(req.user!);
+    await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
+    const expenseId = getParam(req, 'expenseId');
+    const existing = await prisma.companyMonthlyServiceExpense.findFirst({
+      where: { id: expenseId, monthlyServiceId: getParam(req, 'id') },
+    });
+    if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Expense not found', 404);
+
+    await prisma.companyMonthlyServiceExpense.delete({ where: { id: expenseId } });
     return success(res, { deleted: true });
   } catch (err) {
     next(err);

@@ -6,6 +6,11 @@ import {
   listMonthlyServicesQuerySchema,
   updateMonthlyServiceSchema,
 } from '../validators/monthlyServices';
+import {
+  createMonthlyServiceExpenseSchema,
+  expenseIdParamSchema,
+  updateMonthlyServiceExpenseSchema,
+} from '../validators/monthlyServiceExpenses';
 import { idParamSchema } from '../validators/common';
 
 const router = Router();
@@ -15,6 +20,28 @@ router.get(
   '/',
   validate(listMonthlyServicesQuerySchema, 'query'),
   monthlyServicesController.listAll,
+);
+router.get(
+  '/:id/expenses',
+  validate(idParamSchema, 'params'),
+  monthlyServicesController.listExpenses,
+);
+router.post(
+  '/:id/expenses',
+  validate(idParamSchema, 'params'),
+  validate(createMonthlyServiceExpenseSchema),
+  monthlyServicesController.createExpense,
+);
+router.patch(
+  '/:id/expenses/:expenseId',
+  validate(expenseIdParamSchema, 'params'),
+  validate(updateMonthlyServiceExpenseSchema),
+  monthlyServicesController.updateExpense,
+);
+router.delete(
+  '/:id/expenses/:expenseId',
+  validate(expenseIdParamSchema, 'params'),
+  monthlyServicesController.removeExpense,
 );
 router.patch(
   '/:id',
