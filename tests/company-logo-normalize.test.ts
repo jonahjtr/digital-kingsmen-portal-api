@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   detectLogoFormat,
   normalizeLogoImage,
 } from '../src/services/companyLogoNormalize';
+import { setWorkerBindings } from '../src/lib/workerBindings';
 
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -75,5 +76,33 @@ describe('normalizeLogoImage', () => {
     await expect(normalizeLogoImage(Buffer.from('not-an-image'))).rejects.toThrow(
       /unsupported format/i,
     );
+  });
+
+  it('scales down oversized PNG dimensions via Cloudflare Images', async () => {
+  /** Minimal PNG with IHDR claiming 3000×3000 (9M px) — triggers resize, not reject. */
+    const hugePng = Buffer.from(PNG_1X1);
+    hugePng.writeUInt32BE(3000, 16);
+    hugePng.writeUInt32BE(3000, 20);
+
+    const webpOut = Buffer.from(PNG_1X1);
+    const mockImages = {
+      input: () => ({
+        transform: () => ({
+          output: () => ({
+            image: async () =>
+              new Response(webpOut, { headers: { 'content-type': 'image/webp' } }),
+          }),
+        }),
+      }),
+    };
+
+    setWorkerBindings({ IMAGES: mockImages as never });
+    const result = await normalizeLogoImage(hugePng, 'image/png');
+    expect(result.mimeType).toBe('image/webp');
+    expect(result.fileName).toBe('logo.webp');
+  });
+
+  afterEach(() => {
+    setWorkerBindings({});
   });
 });

@@ -1,10 +1,22 @@
 import { prisma } from '../lib/prisma';
+import { propagateCompanySalesmanToMonthlyServices } from './monthlyServicePayout';
 import { AppError, ErrorCodes } from '../lib/errors';
 
 export const STAFF_ASSIGNMENT_INCLUDE = {
   user: { select: { id: true, fullName: true, email: true, role: true, avatarUrl: true } },
   staffTag: { select: { id: true, slug: true, label: true, singular: true, sortOrder: true } },
 } as const;
+
+/** When a client has a salesman, every project (service) uses that same salesman. */
+export async function propagateCompanySalesmanToProjects(
+  companyId: string,
+  salesmanId: string | null,
+) {
+  await prisma.project.updateMany({
+    where: { companyId },
+    data: { assignedSalesmanId: salesmanId },
+  });
+}
 
 export async function syncCompanyLegacyStaffFields(companyId: string) {
   const assignments = await prisma.companyStaffAssignment.findMany({
@@ -19,13 +31,18 @@ export async function syncCompanyLegacyStaffFields(companyId: string) {
     }
   }
 
+  const salesmanId = bySlug.get('salesman') ?? null;
+
   await prisma.company.update({
     where: { id: companyId },
     data: {
-      assignedSalesmanId: bySlug.get('salesman') ?? null,
+      assignedSalesmanId: salesmanId,
       assignedProjectManagerId: bySlug.get('project_manager') ?? null,
     },
   });
+
+  await propagateCompanySalesmanToProjects(companyId, salesmanId);
+  await propagateCompanySalesmanToMonthlyServices(companyId, salesmanId);
 }
 
 export async function assertStaffAssignee(userId: string) {

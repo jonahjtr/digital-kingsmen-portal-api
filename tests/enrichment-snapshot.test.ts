@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { enrichPreviewSchema } from '../src/validators/companies';
 import {
   isEnrichmentCacheValid,
   previewToSnapshot,
   snapshotToPreview,
 } from '../src/services/company-enrichment/enrichmentCache';
+
+describe('enrich preview validation', () => {
+  it('accepts normal website URLs', () => {
+    const parsed = enrichPreviewSchema.safeParse({ website: 'https://mushroomgrove.com' });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects company names or other non-URL text', () => {
+    const parsed = enrichPreviewSchema.safeParse({ website: 'Mushroom Grove' });
+    expect(parsed.success).toBe(false);
+  });
+});
 
 describe('enrichment snapshot cache', () => {
   it('validates cache when website matches and within TTL', () => {

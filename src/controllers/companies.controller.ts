@@ -19,7 +19,11 @@ import {
   importLogoForCompany,
   saveCompanyLogo,
 } from '../services/companyLogo';
-import type { AssignmentInput } from '../services/companyStaffAssignments';
+import {
+  propagateCompanySalesmanToProjects,
+  type AssignmentInput,
+} from '../services/companyStaffAssignments';
+import { propagateCompanySalesmanToMonthlyServices } from '../services/monthlyServicePayout';
 
 function mapCompanyBody(body: Record<string, unknown>) {
   const enrichmentApplied = Boolean(body.enrichment_applied);
@@ -174,13 +178,22 @@ export async function create(req: Request, res: Response, next: NextFunction) {
 
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
-    await assertCanAccessCompany(req.user!, getParam(req, 'id'));
+    const id = getParam(req, 'id');
+    await assertCanAccessCompany(req.user!, id);
     assertNotClient(req.user!);
     const body = stripClientForbiddenFields(req.body, req.user!, ['notes']);
+    const before = await prisma.company.findUnique({
+      where: { id },
+      select: { assignedSalesmanId: true },
+    });
     const company = await prisma.company.update({
-      where: { id: getParam(req, 'id') },
+      where: { id },
       data: mapCompanyBody(body) as Parameters<typeof prisma.company.update>[0]['data'],
     });
+    if (company.assignedSalesmanId !== before?.assignedSalesmanId) {
+      await propagateCompanySalesmanToProjects(id, company.assignedSalesmanId);
+      await propagateCompanySalesmanToMonthlyServices(id, company.assignedSalesmanId);
+    }
     return success(res, mapCompanyLogoFields(company));
   } catch (err) {
     next(err);

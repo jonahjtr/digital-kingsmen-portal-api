@@ -25,7 +25,24 @@ function withCompanyLogo<T extends { company?: { logoUrl?: string | null } | nul
   return { ...project, company: mapNestedCompanyLogo(project.company) };
 }
 
-function mapProjectBody(body: Record<string, unknown>) {
+async function resolveProjectAssignedSalesmanId(
+  companyId: string,
+  explicitSalesmanId: string | undefined,
+): Promise<string | null | undefined> {
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { assignedSalesmanId: true },
+  });
+  if (company?.assignedSalesmanId) {
+    return company.assignedSalesmanId;
+  }
+  return explicitSalesmanId;
+}
+
+function mapProjectBody(
+  body: Record<string, unknown>,
+  assignedSalesmanId?: string | null,
+) {
   const data: Record<string, unknown> = {};
   if (body.name) data.name = body.name;
   if (body.description !== undefined) data.description = body.description;
@@ -37,7 +54,11 @@ function mapProjectBody(body: Record<string, unknown>) {
   if (body.due_date !== undefined) {
     data.dueDate = body.due_date ? new Date(body.due_date as string) : null;
   }
-  if (body.assigned_salesman_id !== undefined) data.assignedSalesmanId = body.assigned_salesman_id;
+  if (assignedSalesmanId !== undefined) {
+    data.assignedSalesmanId = assignedSalesmanId;
+  } else if (body.assigned_salesman_id !== undefined) {
+    data.assignedSalesmanId = body.assigned_salesman_id;
+  }
   if (body.project_manager_id !== undefined) data.projectManagerId = body.project_manager_id;
   if (body.overall_progress !== undefined) data.overallProgress = body.overall_progress;
   if (body.client_facing_notes !== undefined) data.clientFacingNotes = body.client_facing_notes;
@@ -99,6 +120,11 @@ export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
     const body = req.body;
+    await assertCanAccessCompany(req.user!, body.company_id);
+    const assignedSalesmanId = await resolveProjectAssignedSalesmanId(
+      body.company_id,
+      body.assigned_salesman_id,
+    );
     const project = await prisma.project.create({
       data: {
         companyId: body.company_id,
@@ -108,7 +134,7 @@ export async function create(req: Request, res: Response, next: NextFunction) {
         priority: body.priority,
         startDate: body.start_date ? new Date(body.start_date) : undefined,
         dueDate: body.due_date ? new Date(body.due_date) : undefined,
-        assignedSalesmanId: body.assigned_salesman_id,
+        assignedSalesmanId: assignedSalesmanId ?? null,
         projectManagerId: body.project_manager_id,
         clientFacingNotes: body.client_facing_notes,
         internalNotes: body.internal_notes,
@@ -122,12 +148,17 @@ export async function create(req: Request, res: Response, next: NextFunction) {
 
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
-    await assertCanAccessProject(req.user!, getParam(req, 'id'));
+    const id = getParam(req, 'id');
+    const existing = await getProjectIfAccessible(req.user!, id);
     const forbidden = ['internal_notes', 'overall_progress', 'status'];
     const body = stripClientForbiddenFields(req.body, req.user!, forbidden);
+    const assignedSalesmanId = await resolveProjectAssignedSalesmanId(
+      existing.companyId,
+      body.assigned_salesman_id,
+    );
     const project = await prisma.project.update({
-      where: { id: getParam(req, 'id') },
-      data: mapProjectBody(body),
+      where: { id },
+      data: mapProjectBody(body, assignedSalesmanId),
     });
     return success(res, stripInternalProjectFields(project, req.user!.role));
   } catch (err) {

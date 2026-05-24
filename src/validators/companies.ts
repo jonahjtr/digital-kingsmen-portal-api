@@ -1,7 +1,26 @@
 import { z } from 'zod';
+import { normalizeWebsiteUrl } from '../services/company-enrichment/normalizeUrl';
 import { createStaffAssignmentSchema } from './staffAssignments';
 
-const optionalUrl = z.string().min(1).optional();
+function isValidWebsiteUrl(value: string): boolean {
+  try {
+    normalizeWebsiteUrl(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const websiteUrlField = z
+  .string()
+  .min(1, 'Website URL is required')
+  .refine(isValidWebsiteUrl, 'Enter a valid website URL (e.g. https://example.com)');
+
+const optionalUrl = z
+  .string()
+  .min(1)
+  .refine(isValidWebsiteUrl, 'Enter a valid website URL (e.g. https://example.com)')
+  .optional();
 const optionalEmail = z.union([z.string().email(), z.literal('')]).optional();
 
 const addressFields = {
@@ -37,7 +56,7 @@ export const createCompanySchema = z.object({
 export const updateCompanySchema = createCompanySchema.partial();
 
 export const enrichPreviewSchema = z.object({
-  website: z.string().min(1, 'Website URL is required'),
+  website: websiteUrlField,
   google_business_url: z.string().optional(),
   company_id: z.string().uuid().optional(),
   force: z.boolean().optional(),

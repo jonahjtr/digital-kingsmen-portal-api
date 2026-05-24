@@ -2,6 +2,8 @@ import { getWorkerBindings } from '../lib/workerBindings';
 
 /** Max stored logo size (matches upload / fetch cap). */
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+/** Max source download before scaling — large originals are resized via Cloudflare Images. */
+export const MAX_SOURCE_LOGO_BYTES = 12 * 1024 * 1024;
 
 export const OUTPUT_LOGO_MIME = 'image/webp' as const;
 export const OUTPUT_LOGO_FILE = 'logo.webp' as const;
@@ -182,10 +184,16 @@ function prepareLogoBytes(buffer: Buffer, format: LogoFormat): { buffer: Buffer;
   return { buffer, format };
 }
 
-function shouldUseImagesTransform(format: LogoFormat, byteLength: number): boolean {
+function needsImagesTransform(
+  format: LogoFormat,
+  byteLength: number,
+  pixels?: number,
+): boolean {
   if (format === 'svg') return false;
   if (format === 'avif' || format === 'gif') return true;
   if (byteLength > TRANSFORM_SIZE_THRESHOLD) return true;
+  if (byteLength > MAX_OUTPUT_BYTES) return true;
+  if (pixels !== undefined && pixels > MAX_PIXELS) return true;
   return false;
 }
 
@@ -245,21 +253,22 @@ export async function normalizeLogoImage(
   const { buffer: rasterBuffer, format } = prepareLogoBytes(buffer, detectedFormat);
 
   const pixels = estimatePixelCount(rasterBuffer, format);
-  if (pixels !== undefined && pixels > MAX_PIXELS) {
-    throw new Error('Logo image is too large to process');
-  }
-
-  if (rasterBuffer.length > MAX_OUTPUT_BYTES) {
-    throw new Error('Logo image is too large (max 2MB)');
-  }
-
   const images = getWorkerBindings()?.IMAGES;
-  if (images && shouldUseImagesTransform(format, rasterBuffer.length)) {
+  const shouldTransform = needsImagesTransform(format, rasterBuffer.length, pixels);
+
+  if (shouldTransform && images) {
     try {
       return await transformWithCloudflareImages(images, rasterBuffer);
     } catch {
-      /* fall through to pass-through */
+      /* fall through — reject below if still over limits */
     }
+  }
+
+  if (pixels !== undefined && pixels > MAX_PIXELS) {
+    throw new Error('Logo image is too large to process');
+  }
+  if (rasterBuffer.length > MAX_OUTPUT_BYTES) {
+    throw new Error('Logo image is too large (max 2MB)');
   }
 
   return passThroughLogo(rasterBuffer, format);

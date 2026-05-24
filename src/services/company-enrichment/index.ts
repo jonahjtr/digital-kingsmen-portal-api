@@ -1,3 +1,4 @@
+import { AppError, ErrorCodes } from '../../lib/errors';
 import { BOT_CHALLENGE_WARNING, isBotChallengeHtml } from './botChallenge';
 import { fetchWebsite } from './fetchWebsite';
 import { normalizeOptionalUrl, normalizeWebsiteUrl } from './normalizeUrl';
@@ -53,7 +54,13 @@ export async function enrichCompanyFromWebsite(
 ): Promise<CompanyEnrichmentPreview> {
   checkEnrichRateLimit(userId);
   const warnings: string[] = [];
-  const website = normalizeWebsiteUrl(input.website);
+  let website: string;
+  try {
+    website = normalizeWebsiteUrl(input.website);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Invalid website URL';
+    throw new AppError(ErrorCodes.VALIDATION_ERROR, message, 400);
+  }
   let google_business_url: string | undefined;
   try {
     google_business_url = normalizeOptionalUrl(input.google_business_url);
@@ -62,19 +69,24 @@ export async function enrichCompanyFromWebsite(
   }
 
   if (input.company_id && !input.force) {
-    const row = await loadCompanyEnrichmentRow(input.company_id);
-    if (
-      row &&
-      isEnrichmentCacheValid(row.lastEnrichmentWebsite, row.enrichedAt, website, false)
-    ) {
-      const cached = snapshotToPreview(row.enrichmentSnapshot);
-      if (cached) {
-        cached.warnings = [
-          'Loaded cached website data — use Re-scan or change the URL to refresh',
-          ...cached.warnings,
-        ];
-        return finalizePreview(cached, website, google_business_url, warnings);
+    try {
+      const row = await loadCompanyEnrichmentRow(input.company_id);
+      if (
+        row &&
+        isEnrichmentCacheValid(row.lastEnrichmentWebsite, row.enrichedAt, website, false)
+      ) {
+        const cached = snapshotToPreview(row.enrichmentSnapshot);
+        if (cached) {
+          cached.warnings = [
+            'Loaded cached website data — use Re-scan or change the URL to refresh',
+            ...cached.warnings,
+          ];
+          return finalizePreview(cached, website, google_business_url, warnings);
+        }
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not load cached enrichment';
+      warnings.push(message);
     }
   }
 

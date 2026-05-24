@@ -1,7 +1,9 @@
 import { assertLogoUrlAllowedForWebsite } from './resolveUrl';
-import { detectLogoFormat, normalizeLogoImage } from '../companyLogoNormalize';
-
-const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+import {
+  detectLogoFormat,
+  MAX_SOURCE_LOGO_BYTES,
+  normalizeLogoImage,
+} from '../companyLogoNormalize';
 const TIMEOUT_MS = 10_000;
 const USER_AGENT = 'DigitalKingsmenPortalBot/1.0 (+company-enrichment)';
 
@@ -41,8 +43,8 @@ async function downloadLogoBytes(
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > LOGO_MAX_BYTES) {
-      throw new Error('Logo image is too large (max 2MB)');
+    if (total > MAX_SOURCE_LOGO_BYTES) {
+      throw new Error('Logo image is too large (max 12MB)');
     }
     chunks.push(value);
   }

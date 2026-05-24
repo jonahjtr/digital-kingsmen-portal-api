@@ -9,8 +9,13 @@ import { companyWhereForUser } from '../permissions/filters';
 import { textContains } from '../lib/searchFilter';
 import {
   BILLABLE_REVENUE_CATEGORIES,
-  DEFAULT_SALESMAN_SPLIT_PERCENT,
 } from '../validators/monthlyServices';
+import {
+  companyHasSalesman,
+  computeDefaultPayoutCents,
+  defaultSalesmanSplitPercent,
+  resolvePayoutOnWrite,
+} from '../services/monthlyServicePayout';
 
 const includeCompany = {
   company: {
@@ -68,10 +73,6 @@ function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
 }
 
-function computeDefaultPayoutCents(monthlyAmountCents: number): number {
-  return Math.round(monthlyAmountCents * (DEFAULT_SALESMAN_SPLIT_PERCENT / 100));
-}
-
 function payoutCentsFromBody(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -81,23 +82,6 @@ function payoutCentsFromBody(value: unknown): number | null | undefined {
 function parseBillableOnly(query: unknown): boolean {
   if (query === undefined || query === null || query === '') return true;
   return query === 'true' || query === '1';
-}
-
-function resolvePayoutOnWrite(
-  monthlyAmountCents: number,
-  override: boolean,
-  explicitPayoutCents: number | null | undefined,
-): { salesmanPayoutCents: number | null; salesmanPayoutOverride: boolean } {
-  if (override) {
-    return {
-      salesmanPayoutCents: explicitPayoutCents ?? null,
-      salesmanPayoutOverride: true,
-    };
-  }
-  return {
-    salesmanPayoutCents: computeDefaultPayoutCents(monthlyAmountCents),
-    salesmanPayoutOverride: false,
-  };
 }
 
 function serializeMonthlyService(row: {
@@ -134,21 +118,26 @@ function serializeMonthlyService(row: {
     updatedAt: Date;
   }[];
 }) {
+  const hasSalesman = companyHasSalesman(row.company);
   const monthlyAmount = row.monthlyAmountCents / 100;
-  const defaultSalesmanPayout = computeDefaultPayoutCents(row.monthlyAmountCents) / 100;
-  const salesmanPayout = row.salesmanPayoutOverride
-    ? row.salesmanPayoutCents != null
-      ? row.salesmanPayoutCents / 100
-      : null
-    : defaultSalesmanPayout;
+  const defaultSalesmanPayout =
+    computeDefaultPayoutCents(row.monthlyAmountCents, hasSalesman) / 100;
+  const salesmanPayout = !hasSalesman
+    ? 0
+    : row.salesmanPayoutOverride
+      ? row.salesmanPayoutCents != null
+        ? row.salesmanPayoutCents / 100
+        : null
+      : defaultSalesmanPayout;
   const effectivePayout = salesmanPayout ?? 0;
   const expenses = row.expenses ?? [];
   const totalExpensesCents = sumRecurringExpenseCents(expenses);
   const totalExpenses = totalExpensesCents / 100;
-  const salesmanSplitPercent =
-    row.salesmanPayoutOverride && monthlyAmount > 0 && salesmanPayout != null
+  const salesmanSplitPercent = !hasSalesman
+    ? 0
+    : row.salesmanPayoutOverride && monthlyAmount > 0 && salesmanPayout != null
       ? Math.round((salesmanPayout / monthlyAmount) * 1000) / 10
-      : DEFAULT_SALESMAN_SPLIT_PERCENT;
+      : defaultSalesmanSplitPercent(true);
 
   const { expenses: _rawExpenses, ...rest } = row;
 
@@ -282,10 +271,16 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
     } = req.body;
 
     const monthlyAmountCents = dollarsToCents(monthlyAmount);
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { assignedSalesmanId: true },
+    });
+    const hasSalesman = Boolean(company?.assignedSalesmanId);
     const payout = resolvePayoutOnWrite(
       monthlyAmountCents,
       !!payoutOverride,
       payoutCentsFromBody(salesmanPayout),
+      hasSalesman,
     );
 
     const row = await prisma.companyMonthlyService.create({
@@ -317,6 +312,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     const existing = await getMonthlyServiceIfAccessible(req, id);
 
     const body = req.body;
+    const hasSalesman = companyHasSalesman(existing.company);
     const monthlyAmountCents =
       body.monthly_amount !== undefined
         ? dollarsToCents(body.monthly_amount)
@@ -328,7 +324,10 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     }
 
     let salesmanPayoutCents = existing.salesmanPayoutCents;
-    if (body.salesman_payout !== undefined) {
+    if (!hasSalesman) {
+      payoutOverride = false;
+      salesmanPayoutCents = 0;
+    } else if (body.salesman_payout !== undefined) {
       salesmanPayoutCents = payoutCentsFromBody(body.salesman_payout) ?? null;
       payoutOverride = true;
     } else if (
@@ -337,7 +336,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     ) {
       if (!payoutOverride || body.salesman_payout_override === false) {
         payoutOverride = false;
-        salesmanPayoutCents = computeDefaultPayoutCents(monthlyAmountCents);
+        salesmanPayoutCents = computeDefaultPayoutCents(monthlyAmountCents, true);
       }
     }
 
