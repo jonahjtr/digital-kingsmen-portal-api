@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject } from '../permissions/access';
+import { ensureConversationMembers } from './conversation-members.service';
 import { createNotification, notifyUsers } from './notification.service';
 
 export async function sendNudge(user: User, projectId: string) {
@@ -66,6 +67,8 @@ export async function sendNudge(user: User, projectId: string) {
       data: { projectId, type: 'internal_project' },
     });
   }
+
+  await ensureConversationMembers(conversation.id, [user.id]);
 
   await prisma.message.create({
     data: {

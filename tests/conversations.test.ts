@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
+import { ConversationType } from '@prisma/client';
 import { createApp } from '../src/app';
+import { getPrisma } from '../src/lib/prisma';
 
 const app = createApp();
 
@@ -113,5 +115,75 @@ describe('Conversations unread (per-user)', () => {
       (c) => c.id === conversationId,
     );
     expect(clientRow?.unreadCount ?? 0).toBe(unreadBefore);
+  });
+});
+
+describe('Internal conversation members', () => {
+  let adminToken: string | null;
+  let salesmanToken: string | null;
+  let projectId: string | null;
+
+  beforeAll(async () => {
+    adminToken = await login('admin@digitalkingsmen.com');
+    salesmanToken = await login('salesman@digitalkingsmen.com');
+    if (!adminToken) return;
+
+    const projectsRes = await request(app)
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${adminToken}`);
+    projectId = (projectsRes.body.data as Array<{ id: string }>)[0]?.id ?? null;
+  });
+
+  it('adds project staff (including salesman) when admin creates internal conversation', async () => {
+    if (!adminToken || !salesmanToken || !projectId) return;
+
+    const createRes = await request(app)
+      .post('/api/conversations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ project_id: projectId, type: 'internal_project' });
+    expect(createRes.status).toBe(201);
+
+    const conversationId = createRes.body.data.id as string;
+
+    const salesmanList = await request(app)
+      .get('/api/conversations')
+      .set('Authorization', `Bearer ${salesmanToken}`);
+    expect(salesmanList.status).toBe(200);
+    const row = (salesmanList.body.data as Array<{ id: string }>).find(
+      (c) => c.id === conversationId,
+    );
+    expect(row).toBeDefined();
+  });
+
+  it('backfills salesman membership when admin messages a legacy internal thread', async () => {
+    if (!adminToken || !salesmanToken || !projectId) return;
+
+    const prisma = getPrisma();
+    const adminUser = await prisma.user.findUnique({
+      where: { email: 'admin@digitalkingsmen.com' },
+      select: { id: true },
+    });
+    if (!adminUser) return;
+
+    const legacy = await prisma.conversation.create({
+      data: {
+        projectId,
+        type: ConversationType.internal_project,
+        members: { create: [{ userId: adminUser.id }] },
+      },
+    });
+
+    const sendRes = await request(app)
+      .post(`/api/conversations/${legacy.id}/messages`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ message: `Legacy staff sync ${Date.now()}` });
+    expect(sendRes.status).toBe(201);
+
+    const salesmanList = await request(app)
+      .get('/api/conversations')
+      .set('Authorization', `Bearer ${salesmanToken}`);
+    expect(salesmanList.status).toBe(200);
+    const row = (salesmanList.body.data as Array<{ id: string }>).find((c) => c.id === legacy.id);
+    expect(row).toBeDefined();
   });
 });

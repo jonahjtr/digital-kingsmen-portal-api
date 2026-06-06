@@ -17,6 +17,10 @@ import {
   mapConversationWithUnread,
   markConversationRead as markConversationReadService,
 } from '../services/conversation-read.service';
+import {
+  ensureConversationMembers,
+  resolveDefaultMemberIds,
+} from '../services/conversation-members.service';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -90,8 +94,13 @@ export async function create(req: Request, res: Response, next: NextFunction) {
     if (req.user!.role === 'client' && body.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Clients can only create client project conversations', 403);
     }
-    const memberIds = body.member_ids ?? [req.user!.id];
-    if (!memberIds.includes(req.user!.id)) memberIds.push(req.user!.id);
+    const memberIds = await resolveDefaultMemberIds({
+      type: body.type,
+      projectId: body.project_id,
+      companyId: body.company_id,
+      creatorId: req.user!.id,
+      explicitMemberIds: body.member_ids,
+    });
     const conversation = await prisma.conversation.create({
       data: {
         projectId: body.project_id,
@@ -150,13 +159,24 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     if (req.user!.role === 'client' && conversation.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
+
+    await ensureConversationMembers(conversationId, [req.user!.id]);
+
+    const refreshed = await prisma.conversation.findFirst({
+      where: { id: conversationId, members: { some: { userId: req.user!.id } } },
+      include: {
+        members: { include: { user: { select: { id: true, role: true, fullName: true } } } },
+      },
+    });
+    if (!refreshed) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
+
     const body = req.body;
     let internalOnly = body.internal_only ?? false;
     if (req.user!.role === 'client') internalOnly = false;
 
     const mentionedUserIds = resolveMentionedUserIds(
       body.mentioned_user_ids,
-      conversation.members,
+      refreshed.members,
       req.user!.id,
       internalOnly,
     );
@@ -189,7 +209,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     const preview = body.message.slice(0, 120);
     const senderName = req.user!.fullName ?? 'Someone';
     await Promise.all(
-      conversation.members
+      refreshed.members
         .filter((m) => m.userId !== req.user!.id)
         .filter((m) => !(internalOnly && m.user.role === 'client'))
         .filter((m) => !mentionedUserIds.includes(m.userId))

@@ -9,7 +9,9 @@
     "build": "tsc",
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
     "deploy:cf": "npm run cf:migrate:remote && npm run deploy",
+    "deploy:cf:staging": "npm run cf:migrate:remote && npm run deploy:staging",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
@@ -64,7 +66,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.4",
-    "wrangler": "^4.92.0"
+    "wrangler": "^4.98.0"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
