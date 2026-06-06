@@ -118,14 +118,16 @@ describe('Conversations unread (per-user)', () => {
   });
 });
 
-describe('Internal conversation members', () => {
+describe('Unified project conversations', () => {
   let adminToken: string | null;
   let salesmanToken: string | null;
+  let clientToken: string | null;
   let projectId: string | null;
 
   beforeAll(async () => {
     adminToken = await login('admin@digitalkingsmen.com');
     salesmanToken = await login('salesman@digitalkingsmen.com');
+    clientToken = await login('client-pure@example.com');
     if (!adminToken) return;
 
     const projectsRes = await request(app)
@@ -134,16 +136,14 @@ describe('Internal conversation members', () => {
     projectId = (projectsRes.body.data as Array<{ id: string }>)[0]?.id ?? null;
   });
 
-  it('adds project staff (including salesman) when admin creates internal conversation', async () => {
+  it('includes salesman on client_project thread when opening unified conversation', async () => {
     if (!adminToken || !salesmanToken || !projectId) return;
 
-    const createRes = await request(app)
-      .post('/api/conversations')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ project_id: projectId, type: 'internal_project' });
-    expect(createRes.status).toBe(201);
-
-    const conversationId = createRes.body.data.id as string;
+    const openRes = await request(app)
+      .get(`/api/conversations/by-project/${projectId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(openRes.status).toBe(200);
+    const conversationId = openRes.body.data.id as string;
 
     const salesmanList = await request(app)
       .get('/api/conversations')
@@ -155,7 +155,7 @@ describe('Internal conversation members', () => {
     expect(row).toBeDefined();
   });
 
-  it('backfills salesman membership when admin messages a legacy internal thread', async () => {
+  it('merges legacy internal thread and backfills salesman on send', async () => {
     if (!adminToken || !salesmanToken || !projectId) return;
 
     const prisma = getPrisma();
@@ -176,14 +176,80 @@ describe('Internal conversation members', () => {
     const sendRes = await request(app)
       .post(`/api/conversations/${legacy.id}/messages`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ message: `Legacy staff sync ${Date.now()}` });
+      .send({ message: `Legacy merge ${Date.now()}`, internal_only: true });
     expect(sendRes.status).toBe(201);
+
+    const byProject = await request(app)
+      .get(`/api/conversations/by-project/${projectId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(byProject.status).toBe(200);
+    const unifiedId = byProject.body.data.id as string;
 
     const salesmanList = await request(app)
       .get('/api/conversations')
       .set('Authorization', `Bearer ${salesmanToken}`);
-    expect(salesmanList.status).toBe(200);
-    const row = (salesmanList.body.data as Array<{ id: string }>).find((c) => c.id === legacy.id);
+    const row = (salesmanList.body.data as Array<{ id: string }>).find(
+      (c) => c.id === unifiedId,
+    );
+    expect(row).toBeDefined();
+    expect(unifiedId).not.toBe(legacy.id);
+  });
+
+  it('client cannot read internal-only messages in unified thread', async () => {
+    if (!adminToken || !clientToken || !projectId) return;
+
+    const openRes = await request(app)
+      .get(`/api/conversations/by-project/${projectId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    const conversationId = openRes.body.data.id as string;
+
+    await request(app)
+      .post(`/api/conversations/${conversationId}/messages`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ message: `Team note ${Date.now()}`, internal_only: true });
+
+    const clientMsgs = await request(app)
+      .get(`/api/conversations/${conversationId}/messages`)
+      .set('Authorization', `Bearer ${clientToken}`);
+    expect(clientMsgs.status).toBe(200);
+    const bodies = (clientMsgs.body.data as Array<{ message?: string; internalOnly?: boolean }>).map(
+      (m) => m.message,
+    );
+    expect(bodies.some((b) => b?.includes('Team note'))).toBe(false);
+  });
+
+  it('auto-provisions a unified conversation when a project is created', async () => {
+    if (!adminToken || !salesmanToken) return;
+
+    const projectsRes = await request(app)
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const existing = (projectsRes.body.data as Array<{ companyId?: string }>)[0];
+    const companyId = existing?.companyId;
+    if (!companyId) return;
+
+    const createRes = await request(app)
+      .post('/api/projects')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        company_id: companyId,
+        name: `Messaging v1 ${Date.now()}`,
+      });
+    expect(createRes.status).toBe(201);
+    const newProjectId = createRes.body.data.id as string;
+
+    const byProject = await request(app)
+      .get(`/api/conversations/by-project/${newProjectId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(byProject.status).toBe(200);
+    expect(byProject.body.data.type).toBe('client_project');
+
+    const salesmanList = await request(app)
+      .get('/api/conversations')
+      .set('Authorization', `Bearer ${salesmanToken}`);
+    const row = (salesmanList.body.data as Array<{ id: string }>).find(
+      (c) => c.id === byProject.body.data.id,
+    );
     expect(row).toBeDefined();
   });
 });

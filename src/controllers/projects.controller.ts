@@ -15,6 +15,7 @@ import { stripInternalProjectFields } from '../lib/sanitize';
 import { textContains } from '../lib/searchFilter';
 import * as nudgeService from '../services/nudge.service';
 import * as progressService from '../services/progress.service';
+import { ensureProjectConversation } from '../services/conversation-members.service';
 import { mapNestedCompanyLogo } from '../lib/companyResponse';
 import { projectListStatusWhere, resolveProjectSortField } from '../lib/projectListFilters';
 
@@ -140,6 +141,7 @@ export async function create(req: Request, res: Response, next: NextFunction) {
         internalNotes: body.internal_notes,
       },
     });
+    await ensureProjectConversation(project.id);
     return created(res, project);
   } catch (err) {
     next(err);

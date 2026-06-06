@@ -19,6 +19,7 @@ import {
 } from '../services/conversation-read.service';
 import {
   ensureConversationMembers,
+  ensureProjectConversation,
   resolveDefaultMemberIds,
 } from '../services/conversation-members.service';
 
@@ -36,10 +37,33 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       },
       orderBy: { updatedAt: 'desc' },
     });
-    const filtered =
-      user.role === 'client'
-        ? conversations.filter((c) => c.type === 'client_project')
-        : conversations;
+
+    const projectIds = [
+      ...new Set(
+        conversations
+          .map((c) => c.projectId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    await Promise.all(projectIds.map((projectId) => ensureProjectConversation(projectId)));
+
+    const refreshed = await prisma.conversation.findMany({
+      where: { members: { some: { userId } } },
+      include: {
+        members: { where: { userId }, take: 1 },
+        messages: { take: 1, orderBy: { createdAt: 'desc' } },
+        project: { select: { id: true, name: true } },
+        company: { select: { id: true, name: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const filtered = refreshed.filter((c) => {
+      if (user.role === 'client') {
+        return c.type === 'client_project';
+      }
+      return c.type !== 'internal_project';
+    });
 
     const mapped = await Promise.all(
       filtered.map((c) => {
@@ -87,6 +111,32 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function getForProject(req: Request, res: Response, next: NextFunction) {
+  try {
+    const projectId = getParam(req, 'projectId');
+    await assertCanAccessProject(req.user!, projectId);
+    const { id } = await ensureProjectConversation(projectId);
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id,
+        members: { some: { userId: req.user!.id } },
+      },
+      include: {
+        members: { include: { user: { select: { id: true, fullName: true, email: true } } } },
+        project: { select: { id: true, name: true } },
+      },
+    });
+    if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
+    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
+    }
+    return success(res, conversation);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     const body = req.body;
@@ -94,6 +144,19 @@ export async function create(req: Request, res: Response, next: NextFunction) {
     if (req.user!.role === 'client' && body.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Clients can only create client project conversations', 403);
     }
+
+    if (
+      body.project_id &&
+      (body.type === 'client_project' || body.type === 'internal_project')
+    ) {
+      const { id } = await ensureProjectConversation(body.project_id);
+      const conversation = await prisma.conversation.findUnique({
+        where: { id },
+        include: { members: true },
+      });
+      return created(res, conversation);
+    }
+
     const memberIds = await resolveDefaultMemberIds({
       type: body.type,
       projectId: body.project_id,

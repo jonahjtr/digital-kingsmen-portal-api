@@ -4,12 +4,17 @@ import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
 import { createMessageSchema } from '../validators/misc';
 import { createConversationSchema, markConversationReadSchema } from '../validators/conversations';
-import { idParamSchema } from '../validators/common';
+import { idParamSchema, projectIdParamSchema } from '../validators/common';
 
 const router = Router();
 router.use(authenticate);
 
 router.get('/', conversationsController.list);
+router.get(
+  '/by-project/:projectId',
+  validate(projectIdParamSchema, 'params'),
+  conversationsController.getForProject,
+);
 router.get('/:id', validate(idParamSchema, 'params'), conversationsController.getById);
 router.post('/', validate(createConversationSchema), conversationsController.create);
 router.get('/:id/messages', validate(idParamSchema, 'params'), conversationsController.listMessages);

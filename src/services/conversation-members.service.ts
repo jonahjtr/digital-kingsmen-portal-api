@@ -78,10 +78,7 @@ export async function resolveDefaultMemberIds(input: {
 
   if (type === 'client_project' && projectId) {
     ids.push(...(await clientIdsForProject(projectId)));
-    const project = await loadProjectContext(projectId);
-    if (project) {
-      ids.push(project.projectManagerId, project.company.assignedProjectManagerId);
-    }
+    ids.push(...(await staffIdsForProject(projectId)));
   } else if (type === 'internal_project' && projectId) {
     ids.push(...(await staffIdsForProject(projectId)));
   } else if (type === 'admin_salesman') {
@@ -106,6 +103,67 @@ export async function resolveDefaultMemberIds(input: {
   }
 
   return activeMemberIds(uniqueIds(ids), type);
+}
+
+/** Move legacy internal_project threads into the unified client_project thread. */
+async function mergeInternalThreadsInto(projectId: string, primaryId: string): Promise<void> {
+  const legacy = await prisma.conversation.findMany({
+    where: { projectId, type: 'internal_project', NOT: { id: primaryId } },
+    include: { members: true },
+  });
+
+  for (const internal of legacy) {
+    await prisma.message.updateMany({
+      where: { conversationId: internal.id },
+      data: { conversationId: primaryId, internalOnly: true },
+    });
+
+    const existing = await prisma.conversationMember.findMany({
+      where: { conversationId: primaryId },
+      select: { userId: true },
+    });
+    const existingIds = new Set(existing.map((m) => m.userId));
+    const toAdd = internal.members
+      .map((m) => m.userId)
+      .filter((userId) => !existingIds.has(userId));
+
+    if (toAdd.length > 0) {
+      await prisma.conversationMember.createMany({
+        data: toAdd.map((userId) => ({ conversationId: primaryId, userId })),
+      });
+    }
+
+    await prisma.conversationMember.deleteMany({ where: { conversationId: internal.id } });
+    await prisma.conversation.delete({ where: { id: internal.id } });
+  }
+}
+
+/** One unified thread per project: clients + all staff. */
+export async function ensureProjectConversation(projectId: string): Promise<{ id: string }> {
+  let conversation = await prisma.conversation.findFirst({
+    where: { projectId, type: 'client_project' },
+  });
+
+  if (!conversation) {
+    const memberIds = await resolveDefaultMemberIds({
+      type: 'client_project',
+      projectId,
+    });
+    conversation = await prisma.conversation.create({
+      data: {
+        projectId,
+        type: 'client_project',
+        members: {
+          create: memberIds.map((userId) => ({ userId })),
+        },
+      },
+    });
+  }
+
+  await mergeInternalThreadsInto(projectId, conversation.id);
+  await ensureConversationMembers(conversation.id);
+
+  return { id: conversation.id };
 }
 
 /** Backfill missing members on project-linked conversations (e.g. legacy rows or nudges). */
@@ -144,4 +202,13 @@ export async function ensureConversationMembers(
   await prisma.conversationMember.createMany({
     data: toAdd.map((userId) => ({ conversationId, userId })),
   });
+}
+
+/** Backfill unified project threads for all existing projects. */
+export async function backfillAllProjectConversations(): Promise<{ projects: number }> {
+  const projects = await prisma.project.findMany({ select: { id: true } });
+  for (const project of projects) {
+    await ensureProjectConversation(project.id);
+  }
+  return { projects: projects.length };
 }

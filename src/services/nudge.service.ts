@@ -3,7 +3,12 @@ import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject } from '../permissions/access';
-import { ensureConversationMembers } from './conversation-members.service';
+import { ensureProjectConversation } from './conversation-members.service';
+import { broadcastConversation } from '../party/broadcast';
+import {
+  mapMessageWithMentions,
+  messageWithMentionsInclude,
+} from './message-mentions.service';
 import { createNotification, notifyUsers } from './notification.service';
 
 export async function sendNudge(user: User, projectId: string) {
@@ -59,24 +64,27 @@ export async function sendNudge(user: User, projectId: string) {
 
   await notifyUsers(notifyIds, nudgeTitle, nudgeMessage, 'nudge');
 
-  let conversation = await prisma.conversation.findFirst({
-    where: { projectId, type: 'internal_project' },
-  });
-  if (!conversation) {
-    conversation = await prisma.conversation.create({
-      data: { projectId, type: 'internal_project' },
-    });
-  }
+  const { id: conversationId } = await ensureProjectConversation(projectId);
 
-  await ensureConversationMembers(conversation.id, [user.id]);
-
-  await prisma.message.create({
+  const message = await prisma.message.create({
     data: {
-      conversationId: conversation.id,
+      conversationId,
       senderId: user.id,
       message: nudgeMessage,
       internalOnly: true,
     },
+    include: messageWithMentionsInclude,
+  });
+  const mapped = mapMessageWithMentions(message);
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { updatedAt: new Date() },
+  });
+  await broadcastConversation(conversationId, {
+    type: 'message.created',
+    payload: mapped,
+    tags: ['staff'],
   });
 
   return { nudged: true, projectId };
