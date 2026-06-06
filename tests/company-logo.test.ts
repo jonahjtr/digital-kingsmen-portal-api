@@ -64,14 +64,13 @@ describe('Company logo API', () => {
     expect(missing.status).toBe(404);
   });
 
-  it('salesman cannot upload company logo', async () => {
-    const adminToken = await login('admin@digitalkingsmen.com');
+  it('salesman can upload company logo for assigned clients', async () => {
     const salesmanToken = await login('salesman@digitalkingsmen.com');
-    if (!adminToken || !salesmanToken) return;
+    if (!salesmanToken) return;
 
     const companies = await request(app)
       .get('/api/companies')
-      .set('Authorization', `Bearer ${adminToken}`);
+      .set('Authorization', `Bearer ${salesmanToken}`);
     const companyId = companies.body.data?.[0]?.id;
     if (!companyId) return;
 
@@ -80,6 +79,7 @@ describe('Company logo API', () => {
       .set('Authorization', `Bearer ${salesmanToken}`)
       .attach('file', PNG_1X1, { filename: 'logo.png', contentType: 'image/png' });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.body.data.hasLogo).toBe(true);
   });
 });

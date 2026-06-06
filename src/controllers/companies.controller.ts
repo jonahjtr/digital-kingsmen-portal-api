@@ -68,15 +68,27 @@ function mapCompanyBody(body: Record<string, unknown>) {
 }
 
 function assertEnrichRole(user: { role: string }) {
-  if (user.role === 'client' || user.role === 'salesman') {
+  if (user.role === 'client') {
     throw new AppError(ErrorCodes.FORBIDDEN, 'Not allowed to enrich companies', 403);
   }
 }
 
 function assertCanMutateCompanyLogo(user: { role: string }) {
-  if (user.role !== 'admin' && user.role !== 'employee') {
+  if (user.role === 'client') {
     throw new AppError(ErrorCodes.FORBIDDEN, 'Not allowed to change company logo', 403);
   }
+}
+
+function stripSalesmanForbiddenFields<T extends Record<string, unknown>>(
+  body: T,
+  user: { role: string },
+): T {
+  if (user.role !== 'salesman') return body;
+  const copy = { ...body };
+  delete copy.assigned_salesman_id;
+  delete copy.assigned_project_manager_id;
+  delete copy.staff_assignments;
+  return copy;
 }
 
 export async function list(req: Request, res: Response, next: NextFunction) {
@@ -159,14 +171,15 @@ export async function enrichPreview(req: Request, res: Response, next: NextFunct
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
-    if (req.user!.role === 'salesman') {
-      throw new AppError(ErrorCodes.FORBIDDEN, 'Salesmen cannot create companies', 403);
+    const body = stripSalesmanForbiddenFields(req.body as Record<string, unknown>, req.user!);
+    const companyData = mapCompanyBody(body) as Parameters<typeof prisma.company.create>[0]['data'];
+    if (req.user!.role === 'salesman' && !companyData.assignedSalesmanId) {
+      companyData.assignedSalesmanId = req.user!.id;
     }
-    const body = req.body as Record<string, unknown>;
     const staffAssignments = body.staff_assignments as AssignmentInput[] | undefined;
     const importLogoFromUrl = body.import_logo_from_url as string | undefined;
     const company = await createCompanyWithRelations({
-      companyData: mapCompanyBody(body) as Parameters<typeof prisma.company.create>[0]['data'],
+      companyData,
       staffAssignments,
       importLogoFromUrl,
     });
@@ -181,7 +194,10 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     const id = getParam(req, 'id');
     await assertCanAccessCompany(req.user!, id);
     assertNotClient(req.user!);
-    const body = stripClientForbiddenFields(req.body, req.user!, ['notes']);
+    const body = stripSalesmanForbiddenFields(
+      stripClientForbiddenFields(req.body, req.user!, ['notes']),
+      req.user!,
+    );
     const before = await prisma.company.findUnique({
       where: { id },
       select: { assignedSalesmanId: true },
