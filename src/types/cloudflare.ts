@@ -9,4 +9,5 @@ export interface CloudflareBindings {
   JWT_EXPIRES_IN?: string;
   CORS_ORIGIN?: string;
   NUDGE_COOLDOWN_MINUTES?: string;
+  MCP_API_KEY?: string;
 }

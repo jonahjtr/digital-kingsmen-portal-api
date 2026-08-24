@@ -38,9 +38,31 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: cca5a114f4b3baf1459a9b2697cad2e1
         run: npm run deploy:staging
 
+      - name: Set MCP API key (staging)
+        if: github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: cca5a114f4b3baf1459a9b2697cad2e1
+          MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
+        run: |
+          if [ -n "$MCP_API_KEY" ]; then
+            echo "$MCP_API_KEY" | npx wrangler secret put MCP_API_KEY --env staging
+          fi
+
       - name: Deploy production (production branch)
         if: github.ref == 'refs/heads/production'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: cca5a114f4b3baf1459a9b2697cad2e1
         run: npm run deploy
+
+      - name: Set MCP API key (production)
+        if: github.ref == 'refs/heads/production'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: cca5a114f4b3baf1459a9b2697cad2e1
+          MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
+        run: |
+          if [ -n "$MCP_API_KEY" ]; then
+            echo "$MCP_API_KEY" | npx wrangler secret put MCP_API_KEY
+          fi

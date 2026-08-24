@@ -434,6 +434,7 @@ async function main() {
 
     await prisma.task.create({
       data: {
+        companyId: company.id,
         projectId: project.id,
         title: 'Review homepage mockup',
         description: 'Client review needed',
@@ -444,6 +445,19 @@ async function main() {
         dueDate: new Date(Date.now() + 7 * 86400000),
       },
     });
+
+    if (!primaryProjectId || project.id === primaryProjectId) {
+      await prisma.task.create({
+        data: {
+          companyId: company.id,
+          title: `Follow up with ${co.name}`,
+          description: 'Client-level task without a specific service',
+          status: 'todo',
+          assignedTo: salesman.id,
+          createdBy: pm.id,
+        },
+      });
+    }
 
     await prisma.approval.create({
       data: {
@@ -464,6 +478,16 @@ async function main() {
       },
     });
   }
+
+  await prisma.task.create({
+    data: {
+      title: 'Renew SSL certificates',
+      description: 'Internal ops task with no client',
+      status: 'backlog',
+      assignedTo: employee.id,
+      createdBy: admin.id,
+    },
+  });
 
   await prisma.announcement.create({
     data: {

@@ -59,6 +59,30 @@ iconv-lite = "./src/shims/iconv-lite.ts"
 [env.staging]
 name = "digital-kingsmen-portal-api-staging"
 
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "portal-db"
+database_id = "1b418e58-1293-43b9-9706-27a023a6eeef"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "R2"
+bucket_name = "portal-uploads"
+
+[env.staging.images]
+binding = "IMAGES"
+
+[[env.staging.durable_objects.bindings]]
+name = "CONVERSATION_SERVER"
+class_name = "ConversationPartyServer"
+
+[[env.staging.durable_objects.bindings]]
+name = "USER_SERVER"
+class_name = "UserPartyServer"
+
 [env.staging.vars]
+JWT_EXPIRES_IN = "7d"
 CORS_ORIGIN = "http://localhost:5173,http://localhost:8080,http://localhost:8081,http://localhost:8787,https://kingsmen-nexus-staging.auto-cca.workers.dev"
 APP_URL = "https://kingsmen-nexus-staging.auto-cca.workers.dev"
+NUDGE_COOLDOWN_MINUTES = "240"
+STORAGE_DRIVER = "r2"

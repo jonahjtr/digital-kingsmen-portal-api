@@ -11,7 +11,10 @@ type ProjectWithCompany = Project & {
   company?: { id: string; name: string; logoUrl?: string | null } | null;
 };
 type UpdateWithProject = ProjectUpdate & { project?: { name: string } | null };
-type TaskWithProject = Task & { project?: { name: string } | null };
+type TaskWithAnchors = Task & {
+  project?: { name: string } | null;
+  company?: { name: string } | null;
+};
 
 export function mapDashboardProject(p: ProjectWithCompany) {
   return {
@@ -36,12 +39,16 @@ export function mapDashboardUpdate(u: UpdateWithProject) {
   };
 }
 
-export function mapDashboardDeadline(t: TaskWithProject) {
+function taskContextLabel(t: TaskWithAnchors): string | undefined {
+  return t.project?.name ?? t.company?.name ?? undefined;
+}
+
+export function mapDashboardDeadline(t: TaskWithAnchors) {
   return {
     id: t.id,
     title: t.title,
     dueDate: t.dueDate?.toISOString() ?? undefined,
-    projectName: t.project?.name,
+    projectName: taskContextLabel(t),
   };
 }
 
@@ -61,13 +68,13 @@ export function mapDashboardApproval(a: Approval) {
   };
 }
 
-export function mapDashboardTask(t: TaskWithProject) {
+export function mapDashboardTask(t: TaskWithAnchors) {
   return {
     id: t.id,
     title: t.title,
     status: t.status,
     dueDate: t.dueDate?.toISOString() ?? undefined,
-    projectName: t.project?.name,
+    projectName: taskContextLabel(t),
   };
 }
 

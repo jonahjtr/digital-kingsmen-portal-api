@@ -23,7 +23,10 @@ import {
 } from '../services/conversation-read.service';
 
 const projectInclude = { company: { select: { id: true, name: true, logoUrl: true } } };
-const taskDeadlineInclude = { project: { select: { name: true } } };
+const taskDeadlineInclude = {
+  project: { select: { name: true } },
+  company: { select: { name: true } },
+};
 const updateInclude = { project: { select: { name: true } } };
 
 const waitingOnClientTaskWhere = {

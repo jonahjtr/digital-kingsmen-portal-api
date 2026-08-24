@@ -12,6 +12,7 @@ import { idParamSchema } from '../validators/common';
 import { singleFileUpload } from '../middleware/multipart';
 import companyStaffAssignmentsRoutes from './companyStaffAssignments.routes';
 import companyMonthlyServicesRoutes from './companyMonthlyServices.routes';
+import companyOneTimeTransactionsRoutes from './companyOneTimeTransactions.routes';
 
 const router = Router();
 router.use(authenticate);
@@ -19,6 +20,7 @@ router.use(authenticate);
 router.get('/', companiesController.list);
 router.use('/:companyId/staff-assignments', companyStaffAssignmentsRoutes);
 router.use('/:companyId/monthly-services', companyMonthlyServicesRoutes);
+router.use('/:companyId/one-time-transactions', companyOneTimeTransactionsRoutes);
 router.post('/enrich-preview', validate(enrichPreviewSchema), companiesController.enrichPreview);
 router.get('/:id/logo', validate(idParamSchema, 'params'), companiesController.getLogo);
 router.post(

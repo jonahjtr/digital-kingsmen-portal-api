@@ -26,6 +26,21 @@ enum MonthlyServiceStatus {
   cancelled
 }
 
+enum OneTimePaymentStatus {
+  unpaid
+  partial
+  paid
+  waived
+  failed
+}
+
+enum OneTimeTransactionCategory {
+  website
+  branding
+  setup
+  other
+}
+
 enum ProjectStatus {
   not_started
   in_progress
@@ -127,6 +142,20 @@ enum AnnouncementAudience {
   everyone
 }
 
+enum GbpPostStatus {
+  draft
+  approved
+  ready
+  posted
+  expired
+}
+
+enum GbpPostType {
+  update
+  offer
+  event
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -165,6 +194,8 @@ model User {
   companyStaffAssignments   CompanyStaffAssignment[]
   invitesCreated            Invite[]             @relation("InviteCreator")
   nudges                    Nudge[]
+  oneTimeTransactionsAsSalesman CompanyOneTimeTransaction[] @relation("OneTimeTransactionSalesman")
+  gbpPostsCreated           GbpPost[]
 
   @@map("users")
 }
@@ -213,9 +244,75 @@ model Company {
   invites                Invite[]
   staffAssignments       CompanyStaffAssignment[]
   monthlyServices        CompanyMonthlyService[]
+  oneTimeTransactions    CompanyOneTimeTransaction[]
+  tasks                  Task[]
+  gbpLocations           GbpLocation[]
+  gbpPosts               GbpPost[]
 
   @@index([assignedSalesmanId])
   @@map("companies")
+}
+
+model GbpLocation {
+  id                 String   @id @default(uuid())
+  companyId          String   @map("company_id")
+  name               String
+  googleBusinessUrl  String?  @map("google_business_url")
+  formattedAddress   String?  @map("formatted_address")
+  isPrimary          Boolean  @default(false) @map("is_primary")
+  sortOrder          Int      @default(0) @map("sort_order")
+  externalLocationId String?  @map("external_location_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  posts   GbpPostLocation[]
+
+  @@index([companyId])
+  @@map("gbp_locations")
+}
+
+model GbpPost {
+  id               String        @id @default(uuid())
+  companyId        String        @map("company_id")
+  postCode         String        @map("post_code")
+  status           GbpPostStatus @default(draft)
+  postType         GbpPostType   @default(update) @map("post_type")
+  topic            String?
+  description      String
+  ctaType          String?       @map("cta_type")
+  ctaUrl           String?       @map("cta_url")
+  imageUrl         String?       @map("image_url")
+  imageGuidance    String?       @map("image_guidance")
+  linkedContentUrl String?       @map("linked_content_url")
+  notes            String?
+  postedAt         DateTime?     @map("posted_at")
+  createdById      String?       @map("created_by_id")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  locations GbpPostLocation[]
+
+  @@unique([companyId, postCode])
+  @@index([companyId])
+  @@index([status])
+  @@index([createdById])
+  @@map("gbp_posts")
+}
+
+model GbpPostLocation {
+  id         String @id @default(uuid())
+  postId     String @map("post_id")
+  locationId String @map("location_id")
+
+  post     GbpPost     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  location GbpLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, locationId])
+  @@index([locationId])
+  @@map("gbp_post_locations")
 }
 
 model CompanyMonthlyService {
@@ -259,6 +356,74 @@ model CompanyMonthlyServiceExpense {
 
   @@index([monthlyServiceId])
   @@map("company_monthly_service_expenses")
+}
+
+model CompanyOneTimeTransaction {
+  id                     String                     @id @default(uuid())
+  companyId              String                     @map("company_id")
+  projectId              String?                    @map("project_id")
+  salesmanId             String?                    @map("salesman_id")
+  title                  String
+  description            String?
+  category               OneTimeTransactionCategory @default(other)
+  amountCents            Int                        @map("amount_cents")
+  currency               String                     @default("USD")
+  recognizedAt           DateTime                   @map("recognized_at")
+  paymentStatus          OneTimePaymentStatus       @default(unpaid) @map("payment_status")
+  salesmanPayoutCents    Int?                       @map("salesman_payout_cents")
+  salesmanPayoutOverride Boolean                    @default(false) @map("salesman_payout_override")
+  notes                  String?
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+
+  company  Company                           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project  Project?                          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  salesman User?                             @relation("OneTimeTransactionSalesman", fields: [salesmanId], references: [id], onDelete: SetNull)
+  expenses CompanyOneTimeTransactionExpense[]
+
+  @@index([companyId])
+  @@index([projectId])
+  @@index([salesmanId])
+  @@index([recognizedAt])
+  @@index([category])
+  @@map("company_one_time_transactions")
+}
+
+model CompanyOneTimeTransactionExpense {
+  id            String   @id @default(uuid())
+  transactionId String   @map("transaction_id")
+  name          String
+  vendor        String?
+  expenseType   String   @default("contractor") @map("expense_type")
+  amountCents   Int      @map("amount_cents")
+  currency      String   @default("USD")
+  spentAt       DateTime? @map("spent_at")
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  transaction CompanyOneTimeTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@map("company_one_time_transaction_expenses")
+}
+
+model BusinessRecurringExpense {
+  id              String   @id @default(uuid())
+  name            String
+  vendor          String?
+  expenseType     String   @default("other") @map("expense_type")
+  amountCents     Int      @map("amount_cents")
+  currency        String   @default("USD")
+  isActive        Boolean  @default(true) @map("is_active")
+  serviceCategory String?  @map("service_category")
+  startedAt       DateTime? @map("started_at")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("business_recurring_expenses")
 }
 
 model StaffTag {
@@ -339,7 +504,8 @@ model Project {
   reports          Report[]
   internalNotesRel InternalNote[]
   callTranscriptions CallTranscription[]
-  nudges           Nudge[]
+  nudges              Nudge[]
+  oneTimeTransactions CompanyOneTimeTransaction[]
 
   @@index([companyId, status])
   @@map("projects")
@@ -412,7 +578,8 @@ model ServiceStep {
 
 model Task {
   id               String     @id @default(uuid())
-  projectId        String     @map("project_id")
+  companyId        String?    @map("company_id")
+  projectId        String?    @map("project_id")
   projectServiceId String?    @map("project_service_id")
   title            String
   description      String?
@@ -426,7 +593,8 @@ model Task {
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
-  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  company        Company?        @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectService ProjectService? @relation(fields: [projectServiceId], references: [id])
   assignee       User?           @relation("TaskAssignee", fields: [assignedTo], references: [id])
   creator        User            @relation("TaskCreator", fields: [createdBy], references: [id])
@@ -434,6 +602,7 @@ model Task {
   files          File[]
   clientRequests ClientRequest[]
 
+  @@index([companyId, status])
   @@index([projectId, status])
   @@index([assignedTo])
   @@map("tasks")

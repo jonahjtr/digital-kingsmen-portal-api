@@ -22,11 +22,17 @@ import internalNotesRoutes from './internalNotes.routes';
 import callTranscriptionsRoutes from './callTranscriptions.routes';
 import staffTagsRoutes from './staffTags.routes';
 import monthlyServicesRoutes from './monthlyServices.routes';
+import oneTimeTransactionsRoutes from './oneTimeTransactions.routes';
+import businessFinanceRoutes from './businessFinance.routes';
+import businessRecurringExpensesRoutes from './businessRecurringExpenses.routes';
+import gbpPostsRoutes, { gbpLocationRoutes } from './gbpPosts.routes';
+import companyGbpLocationsRoutes from './companyGbpLocations.routes';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/users', usersRoutes);
+router.use('/companies/:companyId/gbp-locations', companyGbpLocationsRoutes);
 router.use('/companies', companiesRoutes);
 router.use('/projects', projectsRoutes);
 router.use('/project-services', projectServiceRoutes);
@@ -48,5 +54,10 @@ router.use('/internal-notes', internalNotesRoutes);
 router.use('/call-transcriptions', callTranscriptionsRoutes);
 router.use('/staff-tags', staffTagsRoutes);
 router.use('/monthly-services', monthlyServicesRoutes);
+router.use('/one-time-transactions', oneTimeTransactionsRoutes);
+router.use('/business-finance', businessFinanceRoutes);
+router.use('/business-recurring-expenses', businessRecurringExpensesRoutes);
+router.use('/gbp-posts', gbpPostsRoutes);
+router.use('/gbp-locations', gbpLocationRoutes);
 
 export default router;

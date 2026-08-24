@@ -5,6 +5,7 @@ import { success, created, buildMeta, parsePagination } from '../lib/apiResponse
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessCompany, assertCanAccessProject } from '../permissions/access';
 import { getClientCompanyIds } from '../permissions/filters';
+import { resolveTaskAnchors } from '../services/taskAnchors';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -112,12 +113,15 @@ export async function convertToTask(req: Request, res: Response, next: NextFunct
     }
     const clientRequest = await prisma.clientRequest.findUnique({ where: { id: getParam(req, 'id') } });
     if (!clientRequest) throw new AppError(ErrorCodes.NOT_FOUND, 'Request not found', 404);
-    if (!clientRequest.projectId) {
-      throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Request must be linked to a project', 400);
-    }
+    const anchors = await resolveTaskAnchors({
+      company_id: clientRequest.companyId,
+      project_id: clientRequest.projectId,
+      client_visible: true,
+    });
     const task = await prisma.task.create({
       data: {
-        projectId: clientRequest.projectId,
+        companyId: anchors.companyId,
+        projectId: anchors.projectId,
         title: clientRequest.title,
         description: clientRequest.description,
         status: 'todo',

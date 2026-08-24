@@ -86,21 +86,71 @@ export async function canManageUsers(user: User): Promise<boolean> {
   return user.role === 'admin';
 }
 
+export async function assertCanCreateTaskAnchors(
+  user: User,
+  anchors: { companyId: string | null; projectId: string | null },
+): Promise<void> {
+  if (user.role === 'client') return;
+  if (anchors.projectId) {
+    await assertCanAccessProject(user, anchors.projectId);
+    return;
+  }
+  if (anchors.companyId) {
+    await assertCanAccessCompany(user, anchors.companyId);
+    return;
+  }
+  assertNotClient(user);
+}
+
+async function assertEmployeeCanModifyCompanyTask(
+  user: User,
+  companyId: string,
+  assignedTo: string | null,
+): Promise<void> {
+  if (assignedTo === user.id) return;
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { assignedProjectManagerId: true },
+  });
+  if (company?.assignedProjectManagerId !== user.id) {
+    throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
+  }
+}
+
 export async function assertCanModifyTask(user: User, taskId: string): Promise<void> {
   const task = await prisma.task.findUnique({ where: { id: taskId } });
   if (!task) throw new AppError(ErrorCodes.NOT_FOUND, 'Task not found', 404);
 
   if (user.role === 'admin') return;
-  if (user.role === 'employee' && task.assignedTo === user.id) return;
-  if (user.role === 'employee' || user.role === 'salesman') {
-    await assertCanAccessProject(user, task.projectId);
-    if (user.role === 'employee' && task.assignedTo !== user.id) {
-      const project = await prisma.project.findUnique({ where: { id: task.projectId } });
-      if (project?.projectManagerId !== user.id) {
-        throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
+  if (task.assignedTo === user.id) return;
+
+  if (task.projectId) {
+    if (user.role === 'employee' || user.role === 'salesman') {
+      await assertCanAccessProject(user, task.projectId);
+      if (user.role === 'employee') {
+        const project = await prisma.project.findUnique({
+          where: { id: task.projectId },
+          select: { projectManagerId: true },
+        });
+        if (project?.projectManagerId !== user.id) {
+          throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
+        }
       }
+      return;
     }
-    return;
+    throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
   }
+
+  if (task.companyId) {
+    if (user.role === 'employee' || user.role === 'salesman') {
+      await assertCanAccessCompany(user, task.companyId);
+      if (user.role === 'employee') {
+        await assertEmployeeCanModifyCompanyTask(user, task.companyId, task.assignedTo);
+      }
+      return;
+    }
+    throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
+  }
+
   throw new AppError(ErrorCodes.FORBIDDEN, 'Cannot modify this task', 403);
 }

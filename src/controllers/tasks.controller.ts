@@ -7,12 +7,40 @@ import { AppError, ErrorCodes } from '../lib/errors';
 import {
   assertCanAccessCompany,
   assertCanAccessProject,
+  assertCanCreateTaskAnchors,
   assertCanModifyTask,
   assertNotClient,
 } from '../permissions/access';
 import { activeTaskWhere, taskWhereForUser, taskCommentInternalFilter } from '../permissions/filters';
 import { textContains } from '../lib/searchFilter';
 import { resolveTaskSortField } from '../lib/sortFields';
+import { resolveTaskAnchors } from '../services/taskAnchors';
+
+const taskInclude = {
+  company: { select: { id: true, name: true } },
+  project: {
+    select: {
+      id: true,
+      name: true,
+      company: { select: { id: true, name: true } },
+    },
+  },
+  assignee: { select: { id: true, fullName: true } },
+} as const;
+
+const taskDetailInclude = {
+  ...taskInclude,
+  assignee: { select: { id: true, fullName: true, email: true } },
+  comments: {
+    include: { user: { select: { id: true, fullName: true } } },
+  },
+} as const;
+
+function companyFilter(companyId: string): Prisma.TaskWhereInput {
+  return {
+    OR: [{ companyId }, { project: { companyId } }],
+  };
+}
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -22,8 +50,9 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     if (projectId) await assertCanAccessProject(req.user!, projectId);
     const includeArchived = req.query.include_archived === 'true';
     const archivedOnly = req.query.archived_only === 'true';
+    const scopeMine = req.query.scope === 'mine';
     const scope = await taskWhereForUser(req.user!);
-    const where = {
+    const where: Prisma.TaskWhereInput = {
       ...scope,
       ...(archivedOnly
         ? { archivedAt: { not: null } }
@@ -31,9 +60,10 @@ export async function list(req: Request, res: Response, next: NextFunction) {
           ? {}
           : activeTaskWhere),
       ...(projectId ? { projectId } : {}),
-      ...(companyId ? { project: { companyId } } : {}),
+      ...(companyId ? companyFilter(companyId) : {}),
       ...(status ? { status: status as never } : {}),
       ...(search ? { title: textContains(search) } : {}),
+      ...(scopeMine ? { assignedTo: req.user!.id } : {}),
     };
     const orderField = resolveTaskSortField(sortBy, archivedOnly);
 
@@ -43,16 +73,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
         skip,
         take: limit,
         orderBy: { [orderField]: sortOrder },
-        include: {
-          project: {
-            select: {
-              id: true,
-              name: true,
-              company: { select: { id: true, name: true } },
-            },
-          },
-          assignee: { select: { id: true, fullName: true } },
-        },
+        include: taskInclude,
       }),
       prisma.task.count({ where }),
     ]);
@@ -68,14 +89,7 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
     const task = await prisma.task.findFirst({
       where: { AND: [{ id: getParam(req, 'id') }, scope] },
       include: {
-        project: {
-          select: {
-            id: true,
-            name: true,
-            company: { select: { id: true, name: true } },
-          },
-        },
-        assignee: { select: { id: true, fullName: true, email: true } },
+        ...taskDetailInclude,
         comments: {
           where: taskCommentInternalFilter(req.user!),
           include: { user: { select: { id: true, fullName: true } } },
@@ -92,14 +106,21 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     const body = req.body;
-    await assertCanAccessProject(req.user!, body.project_id);
     if (req.user!.role === 'client' && !body.client_visible) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Clients can only create client-visible tasks via requests', 403);
     }
+    const anchors = await resolveTaskAnchors({
+      company_id: body.company_id,
+      project_id: body.project_id,
+      project_service_id: body.project_service_id,
+      client_visible: body.client_visible,
+    });
+    await assertCanCreateTaskAnchors(req.user!, anchors);
     const task = await prisma.task.create({
       data: {
-        projectId: body.project_id,
-        projectServiceId: body.project_service_id,
+        companyId: anchors.companyId,
+        projectId: anchors.projectId,
+        projectServiceId: anchors.projectServiceId,
         title: body.title,
         description: body.description,
         assignedTo: body.assigned_to,
@@ -109,16 +130,7 @@ export async function create(req: Request, res: Response, next: NextFunction) {
         clientVisible: body.client_visible ?? false,
         createdBy: req.user!.id,
       },
-      include: {
-        project: {
-          select: {
-            id: true,
-            name: true,
-            company: { select: { id: true, name: true } },
-          },
-        },
-        assignee: { select: { id: true, fullName: true } },
-      },
+      include: taskInclude,
     });
     return created(res, task);
   } catch (err) {
@@ -126,11 +138,72 @@ export async function create(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function resolveAnchorUpdate(
+  taskId: string,
+  body: Record<string, unknown>,
+): Promise<ResolvedAnchorUpdate | null> {
+  const hasAnchorUpdate =
+    body.company_id !== undefined ||
+    body.project_id !== undefined ||
+    body.project_service_id !== undefined;
+  if (!hasAnchorUpdate) return null;
+
+  const current = await prisma.task.findUnique({ where: { id: taskId } });
+  if (!current) throw new AppError(ErrorCodes.NOT_FOUND, 'Task not found', 404);
+
+  let companyId =
+    body.company_id !== undefined ? (body.company_id as string | null) : current.companyId;
+  let projectId =
+    body.project_id !== undefined ? (body.project_id as string | null) : current.projectId;
+
+  if (body.company_id !== undefined && body.project_id === undefined) {
+    projectId = null;
+  }
+
+  const projectServiceId =
+    body.project_service_id !== undefined
+      ? (body.project_service_id as string | null)
+      : projectId
+        ? current.projectServiceId
+        : null;
+
+  const clientVisible =
+    body.client_visible !== undefined
+      ? Boolean(body.client_visible)
+      : current.clientVisible;
+
+  const anchors = await resolveTaskAnchors({
+    company_id: companyId,
+    project_id: projectId,
+    project_service_id: projectServiceId,
+    client_visible: clientVisible,
+  });
+
+  return { anchors, clientVisible };
+}
+
+interface ResolvedAnchorUpdate {
+  anchors: Awaited<ReturnType<typeof resolveTaskAnchors>>;
+  clientVisible: boolean;
+}
+
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     await assertCanModifyTask(req.user!, getParam(req, 'id'));
     const body = req.body;
     const data: Prisma.TaskUncheckedUpdateInput = {};
+
+    const anchorUpdate = await resolveAnchorUpdate(getParam(req, 'id'), body);
+    if (anchorUpdate) {
+      await assertCanCreateTaskAnchors(req.user!, anchorUpdate.anchors);
+      data.companyId = anchorUpdate.anchors.companyId;
+      data.projectId = anchorUpdate.anchors.projectId;
+      data.projectServiceId = anchorUpdate.anchors.projectServiceId;
+      if (body.client_visible === undefined && anchorUpdate.clientVisible !== undefined) {
+        data.clientVisible = anchorUpdate.clientVisible;
+      }
+    }
+
     if (body.title !== undefined) data.title = body.title;
     if (body.description !== undefined) data.description = body.description;
     if (body.assigned_to !== undefined) data.assignedTo = body.assigned_to;
@@ -140,6 +213,19 @@ export async function update(req: Request, res: Response, next: NextFunction) {
       data.dueDate = body.due_date ? new Date(body.due_date) : null;
     }
     if (req.user!.role !== 'client' && body.client_visible !== undefined) {
+      if (body.client_visible) {
+        const nextCompanyId =
+          (data.companyId as string | null | undefined) ??
+          (await prisma.task.findUnique({ where: { id: getParam(req, 'id') }, select: { companyId: true } }))
+            ?.companyId;
+        if (!nextCompanyId) {
+          throw new AppError(
+            ErrorCodes.VALIDATION_ERROR,
+            'client_visible tasks require a company',
+            400,
+          );
+        }
+      }
       data.clientVisible = body.client_visible;
     }
     if (body.archived !== undefined) {
@@ -152,16 +238,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     const task = await prisma.task.update({
       where: { id: getParam(req, 'id') },
       data,
-      include: {
-        project: {
-          select: {
-            id: true,
-            name: true,
-            company: { select: { id: true, name: true } },
-          },
-        },
-        assignee: { select: { id: true, fullName: true } },
-      },
+      include: taskInclude,
     });
     return success(res, task);
   } catch (err) {

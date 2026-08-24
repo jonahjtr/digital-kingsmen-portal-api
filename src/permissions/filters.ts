@@ -29,6 +29,7 @@ export async function companyWhereForUser(user: User): Promise<Prisma.CompanyWhe
       OR: [
         { assignedProjectManagerId: user.id },
         { staffAssignments: { some: { userId: user.id } } },
+        { tasks: { some: { assignedTo: user.id } } },
         {
           projects: {
             some: {
@@ -75,21 +76,47 @@ export async function projectWhereForUser(user: User): Promise<Prisma.ProjectWhe
 /** Excludes archived tasks from boards and default listings. */
 export const activeTaskWhere: Prisma.TaskWhereInput = { archivedAt: null };
 
+/** Tasks with no company and no project — visible to all staff. */
+export const internalTaskWhere: Prisma.TaskWhereInput = {
+  companyId: null,
+  projectId: null,
+};
+
 export async function taskWhereForUser(user: User): Promise<Prisma.TaskWhereInput> {
   const projectWhere = await projectWhereForUser(user);
+  const companyWhere = await companyWhereForUser(user);
+
   if (user.role === 'admin') return {};
   if (user.role === 'client') {
-    return { AND: [{ project: projectWhere }, { clientVisible: true }] };
+    return {
+      AND: [
+        { clientVisible: true },
+        {
+          OR: [
+            { project: projectWhere },
+            { AND: [{ projectId: null }, { company: companyWhere }] },
+          ],
+        },
+      ],
+    };
   }
   if (user.role === 'employee') {
     return {
       OR: [
         { assignedTo: user.id },
         { project: projectWhere },
+        { AND: [{ projectId: null }, { company: companyWhere }] },
+        internalTaskWhere,
       ],
     };
   }
-  return { project: projectWhere };
+  return {
+    OR: [
+      { project: projectWhere },
+      { AND: [{ projectId: null }, { company: companyWhere }] },
+      internalTaskWhere,
+    ],
+  };
 }
 
 export function updateVisibilityFilter(user: User): Prisma.ProjectUpdateWhereInput {
