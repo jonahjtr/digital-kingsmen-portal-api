@@ -20,6 +20,7 @@ import dashboardRoutes from './dashboard.routes';
 import invitesRoutes from './invites.routes';
 import internalNotesRoutes from './internalNotes.routes';
 import callTranscriptionsRoutes from './callTranscriptions.routes';
+import mcpTokensRoutes from '../mcp/tokens.routes';
 import staffTagsRoutes from './staffTags.routes';
 import monthlyServicesRoutes from './monthlyServices.routes';
 import oneTimeTransactionsRoutes from './oneTimeTransactions.routes';
@@ -59,5 +60,6 @@ router.use('/business-finance', businessFinanceRoutes);
 router.use('/business-recurring-expenses', businessRecurringExpensesRoutes);
 router.use('/gbp-posts', gbpPostsRoutes);
 router.use('/gbp-locations', gbpLocationRoutes);
+router.use('/mcp-tokens', mcpTokensRoutes);
 
 export default router;
