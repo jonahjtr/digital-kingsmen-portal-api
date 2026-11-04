@@ -93,6 +93,13 @@ async function patchTaskOptionalAnchors(db: D1Database): Promise<void> {
 
 /** Applies additive schema patches on D1 when migrations have not been run yet. */
 export async function applyD1SchemaPatches(db: D1Database): Promise<void> {
+  // MCP tokens + audit log (0022)
+  await runPatch(db, `CREATE TABLE IF NOT EXISTS "mcp_tokens" ( "id" TEXT NOT NULL PRIMARY KEY, "user_id" TEXT NOT NULL, "name" TEXT NOT NULL, "token_hash" TEXT NOT NULL, "prefix" TEXT NOT NULL, "scopes" TEXT NOT NULL DEFAULT 'read', "expires_at" DATETIME, "last_used_at" DATETIME, "revoked_at" DATETIME, "created_by" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "mcp_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE )`);
+  await runPatch(db, `CREATE UNIQUE INDEX IF NOT EXISTS "mcp_tokens_token_hash_key" ON "mcp_tokens"("token_hash")`);
+  await runPatch(db, `CREATE INDEX IF NOT EXISTS "mcp_tokens_user_id_idx" ON "mcp_tokens"("user_id")`);
+  await runPatch(db, `CREATE TABLE IF NOT EXISTS "mcp_audit_log" ( "id" TEXT NOT NULL PRIMARY KEY, "token_id" TEXT NOT NULL, "user_id" TEXT NOT NULL, "tool" TEXT NOT NULL, "args" TEXT, "ok" INTEGER NOT NULL, "error" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP )`);
+  await runPatch(db, `CREATE INDEX IF NOT EXISTS "mcp_audit_log_token_id_created_at_idx" ON "mcp_audit_log"("token_id", "created_at")`);
+
   await runPatch(
     db,
     `CREATE TABLE IF NOT EXISTS "company_monthly_services" (

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { isAllowedOrigin } from './lib/cors';
 import apiRoutes from './routes';
+import mcpServer from './mcp/server';
 import { errorHandler } from './middleware/errorHandler';
 import { workersBodyParser } from './middleware/bodyParser';
 import { ensureSchemaMiddleware } from './middleware/ensureSchema';
@@ -36,6 +37,7 @@ export function createApp() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  app.use('/mcp', mcpServer);
   app.use('/api', apiRoutes);
   app.use(errorHandler);
 
