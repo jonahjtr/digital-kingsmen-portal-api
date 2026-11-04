@@ -6,6 +6,7 @@ import { success, created } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessCompany, assertNotClient } from '../permissions/access';
 import { companyWhereForUser } from '../permissions/filters';
+import { mapNestedCompanyLogo } from '../lib/companyResponse';
 import { textContains } from '../lib/searchFilter';
 import {
   BILLABLE_REVENUE_CATEGORIES,
@@ -23,6 +24,7 @@ const includeCompany = {
       id: true,
       name: true,
       status: true,
+      logoUrl: true,
       assignedSalesman: { select: { id: true, fullName: true, email: true } },
     },
   },
@@ -102,6 +104,7 @@ function serializeMonthlyService(row: {
     id: string;
     name: string;
     status: string;
+    logoUrl?: string | null;
     assignedSalesman?: { id: string; fullName: string; email: string } | null;
   };
   expenses?: {
@@ -143,6 +146,7 @@ function serializeMonthlyService(row: {
 
   return {
     ...rest,
+    company: mapNestedCompanyLogo(rest.company),
     monthlyAmount,
     defaultSalesmanPayout,
     salesmanPayout,
