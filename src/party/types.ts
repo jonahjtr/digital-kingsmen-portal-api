@@ -4,6 +4,7 @@ export type PartyEventType =
   | 'message.updated'
   | 'conversation.read'
   | 'typing'
+  | 'ticket.updated'
   | 'notification.created'
   | 'notification.read'
   | 'notifications.read_all';

@@ -3,6 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { companyWhereForUser, projectWhereForUser, taskWhereForUser, activeTaskWhere } from '../permissions/filters';
 import type { McpPrincipal, McpScope } from './auth';
+import * as ticketSvc from '../tickets/service';
+import { CATEGORY_KEYS, PRIORITY_KEYS, STATUS_KEYS } from '../tickets/config';
 
 /**
  * DK internal-team MCP tools.
@@ -327,6 +329,131 @@ export const tools: Tool[] = [
   },
 
   // ---------------------------------------------------------------- write
+  {
+    name: 'list_tickets',
+    description:
+      'List client support tickets you can see. Filter by status ("active", "closed" or a status key), assignee ("me"/"none"/user id), priority, category, breached SLA, or search text / "#1042".',
+    scope: 'read',
+    input: z
+      .object({
+        status: z.string().max(40).optional(),
+        assignee: z.string().max(40).optional(),
+        priority: z.enum(PRIORITY_KEYS).optional(),
+        category: z.enum(CATEGORY_KEYS).optional(),
+        breached: z.boolean().optional(),
+        q: z.string().max(100).optional(),
+        limit: z.number().int().min(1).max(100).default(25),
+      })
+      .strict(),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: '"active" (default view), "closed", or new/open/in_progress/waiting_on_client/resolved/closed' },
+        assignee: { type: 'string', description: '"me", "none", or a user id' },
+        priority: { type: 'string', enum: [...PRIORITY_KEYS] },
+        category: { type: 'string', enum: [...CATEGORY_KEYS] },
+        breached: { type: 'boolean', description: 'Only tickets past their SLA' },
+        q: { type: 'string' },
+        limit: { type: 'integer', default: 25, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
+    run: async (p, a) => {
+      const { rows, total } = await ticketSvc.listTickets(p.user, {
+        status: a.status ?? 'active',
+        assigneeId: a.assignee,
+        priority: a.priority,
+        category: a.category,
+        breached: a.breached,
+        q: a.q,
+        page: 1,
+        limit: a.limit,
+      });
+      return { total, tickets: rows };
+    },
+  },
+  {
+    name: 'get_ticket',
+    description: 'Full ticket with its timeline (replies, internal notes, status changes). Accepts id or number.',
+    scope: 'read',
+    input: z.object({ ticket: z.string().max(40) }).strict(),
+    inputSchema: {
+      type: 'object',
+      properties: { ticket: { type: 'string', description: 'Ticket id or number (e.g. 1042)' } },
+      required: ['ticket'],
+      additionalProperties: false,
+    },
+    run: async (p, a) => {
+      const t = await ticketSvc.getTicketForUser(p.user, a.ticket.replace('#', ''));
+      return { ticket: ticketSvc.presentTicket(t, p.user), timeline: await ticketSvc.listEvents(p.user, t.id) };
+    },
+  },
+  {
+    name: 'reply_to_ticket',
+    description:
+      'Reply to a ticket. internal=true adds a team-only note (client never sees it). The client is notified of public replies. Optionally set the status at the same time.',
+    scope: 'write',
+    input: z
+      .object({
+        ticket: z.string().max(40),
+        body: z.string().min(1).max(20000),
+        internal: z.boolean().default(false),
+        status: z.enum(STATUS_KEYS).optional(),
+      })
+      .strict(),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ticket: { type: 'string' },
+        body: { type: 'string', maxLength: 20000 },
+        internal: { type: 'boolean', default: false, description: 'Team-only note' },
+        status: { type: 'string', enum: [...STATUS_KEYS] },
+      },
+      required: ['ticket', 'body'],
+      additionalProperties: false,
+    },
+    run: async (p, a) => {
+      const t = await ticketSvc.getTicketForUser(p.user, a.ticket.replace('#', ''));
+      await ticketSvc.addComment(p.user, t.id, { body: a.body, internal: a.internal, status: a.status });
+      return { ok: true, number: t.number };
+    },
+  },
+  {
+    name: 'update_ticket',
+    description: 'Change a ticket\'s status, priority, category or assignee (user id from list_team, or null to unassign).',
+    scope: 'write',
+    input: z
+      .object({
+        ticket: z.string().max(40),
+        status: z.enum(STATUS_KEYS).optional(),
+        priority: z.enum(PRIORITY_KEYS).optional(),
+        category: z.enum(CATEGORY_KEYS).optional(),
+        assignee_id: id.nullable().optional(),
+      })
+      .strict(),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ticket: { type: 'string' },
+        status: { type: 'string', enum: [...STATUS_KEYS] },
+        priority: { type: 'string', enum: [...PRIORITY_KEYS] },
+        category: { type: 'string', enum: [...CATEGORY_KEYS] },
+        assignee_id: { type: ['string', 'null'], format: 'uuid' },
+      },
+      required: ['ticket'],
+      additionalProperties: false,
+    },
+    run: async (p, a) => {
+      const t = await ticketSvc.getTicketForUser(p.user, a.ticket.replace('#', ''));
+      const u = await ticketSvc.updateTicket(p.user, t.id, {
+        status: a.status,
+        priority: a.priority,
+        category: a.category,
+        assigneeId: a.assignee_id,
+      });
+      return ticketSvc.presentTicket(u, p.user);
+    },
+  },
   {
     name: 'create_task',
     description:

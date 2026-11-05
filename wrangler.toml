@@ -12,6 +12,9 @@ compatibility_flags = [
   "no_handle_cross_request_promise_resolution",
 ]
 
+[triggers]
+crons = ["17 * * * *"]
+
 [observability]
 enabled = true
 
