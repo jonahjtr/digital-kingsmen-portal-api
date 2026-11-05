@@ -18,6 +18,14 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     if (!user || !user.isActive) {
       throw new AppError(ErrorCodes.UNAUTHORIZED, 'Invalid or inactive user', 401);
     }
+    if (payload.imp) {
+      // View-as session: the admin must still be an active admin on every request, or it dies.
+      const admin = await prisma.user.findUnique({ where: { id: payload.imp } });
+      if (!admin || !admin.isActive || admin.role !== 'admin') {
+        throw new AppError(ErrorCodes.UNAUTHORIZED, 'View-as session ended', 401);
+      }
+      req.impersonator = admin;
+    }
     req.user = user;
     next();
   } catch (err) {
