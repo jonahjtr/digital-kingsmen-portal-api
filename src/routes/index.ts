@@ -1,3 +1,5 @@
+import { authenticate } from '../middleware/authenticate';
+import { blockWhileViewingAs } from '../controllers/impersonation.controller';
 import { Router } from 'express';
 import authRoutes from './auth.routes';
 import usersRoutes from './users.routes';
@@ -61,7 +63,7 @@ router.use('/business-finance', businessFinanceRoutes);
 router.use('/business-recurring-expenses', businessRecurringExpensesRoutes);
 router.use('/gbp-posts', gbpPostsRoutes);
 router.use('/gbp-locations', gbpLocationRoutes);
-router.use('/mcp-tokens', mcpTokensRoutes);
+router.use('/mcp-tokens', authenticate, blockWhileViewingAs, mcpTokensRoutes);
 router.use('/tickets', ticketRoutes);
 
 export default router;

@@ -6,6 +6,8 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: UserRole;
+  /** Set when an admin is viewing the portal as this user ("view as"). Admin's user id. */
+  imp?: string;
 }
 
 export const SESSION_JWT_EXPIRES_IN = '24h';

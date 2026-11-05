@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as usersController from '../controllers/users.controller';
 import { authenticate } from '../middleware/authenticate';
+import { blockWhileViewingAs } from '../controllers/impersonation.controller';
 import { validate } from '../middleware/validate';
 import { createUserSchema, updateUserSchema } from '../validators/users';
 import {
@@ -17,6 +18,8 @@ const membershipParamSchema = z.object({
 
 const router = Router();
 router.use(authenticate);
+// Read-only while viewing as someone: no editing accounts/passwords as them.
+router.use((req, res, next) => (req.method === 'GET' ? next() : blockWhileViewingAs(req, res, next)));
 
 router.get('/', usersController.list);
 router.get('/staff', usersController.listStaff);

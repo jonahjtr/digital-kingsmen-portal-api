@@ -28,7 +28,8 @@ export async function logout(_req: Request, res: Response) {
 export async function me(req: Request, res: Response, next: NextFunction) {
   try {
     const data = await authService.getMe(req.user!.id);
-    return success(res, data);
+    const imp = req.impersonator;
+    return success(res, imp ? { ...data, impersonator: { id: imp.id, fullName: imp.fullName, email: imp.email } } : data);
   } catch (err) {
     next(err);
   }
