@@ -86,6 +86,29 @@ describe('Tickets', () => {
     expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } })).status).toBe('open');
   });
 
+  it('client reply while waiting extends the resolution deadline by the paused time', async () => {
+    await request(app).patch(`/api/tickets/${ticketId}`).set(as(admin)).send({ status: 'waiting_on_client' });
+    // Pretend we have been waiting 10 hours.
+    await prisma.ticketEvent.updateMany({
+      where: { ticketId, kind: 'status_changed', data: { contains: '"to":"waiting_on_client"' } },
+      data: { createdAt: new Date(Date.now() - 10 * 3600_000) },
+    });
+    const before = (await prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } })).resolutionDueAt!;
+    await request(app).post(`/api/tickets/${ticketId}/events`).set(as(client)).send({ body: 'back again' });
+    const after = (await prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } })).resolutionDueAt!;
+    const shiftH = (after.getTime() - before.getTime()) / 3600_000;
+    expect(shiftH).toBeGreaterThan(9.9);
+    expect(shiftH).toBeLessThan(10.1);
+  });
+
+  it('ticket attachments do not appear on the Files page', async () => {
+    const up = await request(app).post('/api/files/upload').set(as(client))
+      .attach('file', Buffer.from('x'), { filename: 'shot.txt', contentType: 'text/plain' });
+    await request(app).post(`/api/tickets/${ticketId}/events`).set(as(client)).send({ body: 'file', attachment_file_id: up.body.data.id });
+    const files = await request(app).get('/api/files').set(as(client));
+    expect(files.body.data.map((f: { id: string }) => f.id)).not.toContain(up.body.data.id);
+  });
+
   it('clients can only reopen or resolve; never change priority, assignee or set other statuses', async () => {
     expect((await request(app).patch(`/api/tickets/${ticketId}`).set(as(client)).send({ priority: 'urgent' })).status).toBe(403);
     expect((await request(app).patch(`/api/tickets/${ticketId}`).set(as(client)).send({ status: 'in_progress' })).status).toBe(403);

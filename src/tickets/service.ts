@@ -333,6 +333,7 @@ export async function addComment(
       // Client replied while we were waiting on them, or after it was resolved → reopen.
       patch.status = 'open';
       patch.resolvedAt = null;
+      if (statusKind(t.status) === 'pending') patch.resolutionDueAt = await resumedDueAt(t, now);
     }
   }
   let updated = await prisma.ticket.update({ where: { id: t.id }, data: patch });
@@ -374,10 +375,7 @@ export async function updateTicket(
     if (toKind === 'closed' && fromKind !== 'closed') data.resolvedAt = now;
     if (toKind !== 'closed' && fromKind === 'closed') data.resolvedAt = null;
     // Leaving a pending status: extend the resolution deadline by the time spent waiting (SLA pause).
-    if (fromKind === 'pending' && toKind !== 'pending' && t.resolutionDueAt) {
-      const pausedSince = await lastStatusChangeAt(t.id);
-      if (pausedSince) data.resolutionDueAt = new Date(t.resolutionDueAt.getTime() + (now.getTime() - pausedSince.getTime()));
-    }
+    if (fromKind === 'pending' && toKind !== 'pending') data.resolutionDueAt = await resumedDueAt(t, now);
     changes.push(['status_changed', { from: t.status, to: input.status }]);
   }
   if (input.priority && input.priority !== t.priority) {
@@ -409,9 +407,16 @@ export async function updateTicket(
   return getTicketForUser(user, t.id);
 }
 
-async function lastStatusChangeAt(ticketId: string) {
+/** Leaving a pending status: push the resolution deadline out by the time spent waiting (SLA pause). */
+async function resumedDueAt(t: Ticket, now: Date) {
+  if (!t.resolutionDueAt) return t.resolutionDueAt;
+  const pausedSince = await lastStatusChangeAt(t.id, t.status);
+  return pausedSince ? new Date(t.resolutionDueAt.getTime() + (now.getTime() - pausedSince.getTime())) : t.resolutionDueAt;
+}
+
+async function lastStatusChangeAt(ticketId: string, into: string) {
   const e = await prisma.ticketEvent.findFirst({
-    where: { ticketId, kind: 'status_changed' },
+    where: { ticketId, kind: 'status_changed', data: { contains: `"to":"${into}"` } },
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true },
   });
