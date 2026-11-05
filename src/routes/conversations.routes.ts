@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as conversationsController from '../controllers/conversations.controller';
 import { authenticate } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
-import { createMessageSchema } from '../validators/misc';
+import { createMessageSchema, editMessageSchema, reactionSchema } from '../validators/misc';
 import { createConversationSchema, markConversationReadSchema } from '../validators/conversations';
 import { idParamSchema, projectIdParamSchema } from '../validators/common';
 
@@ -26,8 +26,14 @@ router.patch(
   conversationsController.markConversationRead,
 );
 
+router.post('/:id/typing', validate(idParamSchema, 'params'), conversationsController.typing);
+
 export const messageRoutes = Router();
 messageRoutes.use(authenticate);
 messageRoutes.patch('/:id/read', validate(idParamSchema, 'params'), conversationsController.markMessageRead);
+messageRoutes.patch('/:id', validate(idParamSchema, 'params'), validate(editMessageSchema), conversationsController.editMessage);
+messageRoutes.get('/:id/attachment', validate(idParamSchema, 'params'), conversationsController.messageAttachment);
+messageRoutes.delete('/:id', validate(idParamSchema, 'params'), conversationsController.deleteMessage);
+messageRoutes.post('/:id/reactions', validate(idParamSchema, 'params'), validate(reactionSchema), conversationsController.toggleReaction);
 
 export default router;

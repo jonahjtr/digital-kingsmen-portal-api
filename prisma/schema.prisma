@@ -197,6 +197,7 @@ model User {
   oneTimeTransactionsAsSalesman CompanyOneTimeTransaction[] @relation("OneTimeTransactionSalesman")
   gbpPostsCreated           GbpPost[]
   mcpTokens                 McpToken[]
+  messageReactions          MessageReaction[]
 
   @@map("users")
 }
@@ -673,17 +674,22 @@ model ConversationMember {
 }
 
 model Message {
-  id             String    @id @default(uuid())
-  conversationId String    @map("conversation_id")
-  senderId       String    @map("sender_id")
-  message        String
-  internalOnly   Boolean   @default(false) @map("internal_only")
-  readAt         DateTime? @map("read_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
+  id               String    @id @default(uuid())
+  conversationId   String    @map("conversation_id")
+  senderId         String    @map("sender_id")
+  message          String
+  internalOnly     Boolean   @default(false) @map("internal_only")
+  readAt           DateTime? @map("read_at")
+  editedAt         DateTime? @map("edited_at")
+  deletedAt        DateTime? @map("deleted_at")
+  attachmentFileId String?   @map("attachment_file_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User         @relation(fields: [senderId], references: [id])
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User              @relation(fields: [senderId], references: [id])
+  attachment   File?             @relation(fields: [attachmentFileId], references: [id], onDelete: SetNull)
   mentions     MessageMention[]
+  reactions    MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@map("messages")
@@ -722,6 +728,7 @@ model File {
   task     Task?     @relation(fields: [taskId], references: [id])
   approval Approval?
   uploader User      @relation(fields: [uploadedBy], references: [id])
+  messages Message[]
 
   @@map("files")
 }
@@ -931,4 +938,19 @@ model McpAuditLog {
 
   @@index([tokenId, createdAt])
   @@map("mcp_audit_log")
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  emoji     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("message_reactions")
 }

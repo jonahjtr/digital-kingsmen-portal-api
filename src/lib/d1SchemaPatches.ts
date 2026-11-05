@@ -93,6 +93,14 @@ async function patchTaskOptionalAnchors(db: D1Database): Promise<void> {
 
 /** Applies additive schema patches on D1 when migrations have not been run yet. */
 export async function applyD1SchemaPatches(db: D1Database): Promise<void> {
+  // Messaging: edit/delete, attachments, reactions (0023)
+  await runPatch(db, `ALTER TABLE "messages" ADD COLUMN "edited_at" DATETIME`);
+  await runPatch(db, `ALTER TABLE "messages" ADD COLUMN "deleted_at" DATETIME`);
+  await runPatch(db, `ALTER TABLE "messages" ADD COLUMN "attachment_file_id" TEXT REFERENCES "files" ("id") ON DELETE SET NULL`);
+  await runPatch(db, `CREATE TABLE IF NOT EXISTS "message_reactions" ( "id" TEXT NOT NULL PRIMARY KEY, "message_id" TEXT NOT NULL, "user_id" TEXT NOT NULL, "emoji" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "message_reactions_message_id_fkey" FOREIGN KEY ("message_id") REFERENCES "messages" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "message_reactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE )`);
+  await runPatch(db, `CREATE UNIQUE INDEX IF NOT EXISTS "message_reactions_message_id_user_id_emoji_key" ON "message_reactions"("message_id", "user_id", "emoji")`);
+  await runPatch(db, `CREATE INDEX IF NOT EXISTS "message_reactions_message_id_idx" ON "message_reactions"("message_id")`);
+
   // MCP tokens + audit log (0022)
   await runPatch(db, `CREATE TABLE IF NOT EXISTS "mcp_tokens" ( "id" TEXT NOT NULL PRIMARY KEY, "user_id" TEXT NOT NULL, "name" TEXT NOT NULL, "token_hash" TEXT NOT NULL, "prefix" TEXT NOT NULL, "scopes" TEXT NOT NULL DEFAULT 'read', "expires_at" DATETIME, "last_used_at" DATETIME, "revoked_at" DATETIME, "created_by" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "mcp_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE )`);
   await runPatch(db, `CREATE UNIQUE INDEX IF NOT EXISTS "mcp_tokens_token_hash_key" ON "mcp_tokens"("token_hash")`);

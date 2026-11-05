@@ -15,6 +15,8 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     const projectScope = await projectWhereForUser(req.user!);
     const companyScope = await companyWhereForUser(req.user!);
     const andFilters: Record<string, unknown>[] = [
+      // Chat attachments are served via their message (visibility follows the message), not the Files page.
+      { messages: { none: {} } },
       {
         OR: [
           { project: projectScope },

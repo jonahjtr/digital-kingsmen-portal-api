@@ -6,6 +6,7 @@ import { AppError, ErrorCodes } from '../lib/errors';
 import { assertCanAccessProject } from '../permissions/access';
 import { messageInternalFilter } from '../permissions/filters';
 import { broadcastConversation } from '../party/broadcast';
+import { getStorageProvider } from '../storage';
 import { createNotification, notifyUsers } from '../services/notification.service';
 import {
   buildMentionCreates,
@@ -97,13 +98,17 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
         members: { some: { userId: req.user!.id } },
       },
       include: {
-        members: { include: { user: { select: { id: true, fullName: true, email: true } } } },
+        members: { include: { user: { select: { id: true, fullName: true, email: true, role: true, avatarUrl: true } } } },
         project: { select: { id: true, name: true } },
       },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
     if (req.user!.role === 'client' && conversation.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
+    }
+    // Clients must not learn staff emails; staff see everything.
+    if (req.user!.role === 'client') {
+      for (const m of conversation.members) (m.user as { email?: string }).email = undefined;
     }
     return success(res, conversation);
   } catch (err) {
@@ -190,18 +195,42 @@ export async function listMessages(req: Request, res: Response, next: NextFuncti
     if (req.user!.role === 'client' && conversation.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
-    const { page, limit, skip } = parsePagination(req.query, { maxLimit: 200 });
     const conversationId = getParam(req, 'id');
-    const where = { conversationId, ...messageInternalFilter(req.user!) };
+    const baseWhere = { conversationId, ...messageInternalFilter(req.user!) };
+
+    // Cursor mode (messaging UI): newest `limit` messages before `before` (ISO or message id),
+    // returned oldest→newest, with hasMore for "load older".
+    if (req.query.before !== undefined || req.query.cursor === 'latest') {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+      let beforeDate: Date | undefined;
+      const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+      if (before) {
+        const ref = /^[0-9a-f-]{36}$/i.test(before)
+          ? await prisma.message.findFirst({ where: { id: before, conversationId }, select: { createdAt: true } })
+          : null;
+        beforeDate = ref?.createdAt ?? (Number.isNaN(Date.parse(before)) ? undefined : new Date(before));
+      }
+      const rows = await prisma.message.findMany({
+        where: { ...baseWhere, ...(beforeDate ? { createdAt: { lt: beforeDate } } : {}) },
+        take: limit + 1,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: messageWithMentionsInclude,
+      });
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit).reverse().map(mapMessageWithMentions);
+      return success(res, page, 200, { hasMore });
+    }
+
+    const { page, limit, skip } = parsePagination(req.query, { maxLimit: 200 });
     const [messages, total] = await Promise.all([
       prisma.message.findMany({
-        where,
+        where: baseWhere,
         skip,
         take: limit,
         orderBy: { createdAt: 'asc' },
         include: messageWithMentionsInclude,
       }),
-      prisma.message.count({ where }),
+      prisma.message.count({ where: baseWhere }),
     ]);
     return success(res, messages.map(mapMessageWithMentions), 200, buildMeta(page, limit, total));
   } catch (err) {
@@ -245,12 +274,28 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     );
     const mentionCreates = buildMentionCreates(mentionedUserIds);
 
+    let attachmentFileId: string | undefined;
+    if (body.attachment_file_id) {
+      // Only your own upload, and only one that isn't already attached elsewhere.
+      const file = await prisma.file.findFirst({
+        where: { id: body.attachment_file_id, uploadedBy: req.user!.id, messages: { none: {} } },
+        select: { id: true },
+      });
+      if (!file) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Attachment not found', 400);
+      attachmentFileId = file.id;
+    }
+    const text = typeof body.message === 'string' ? body.message : '';
+    if (!text.trim() && !attachmentFileId) {
+      throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Message is empty', 400);
+    }
+
     const message = await prisma.message.create({
       data: {
         conversationId,
         senderId: req.user!.id,
-        message: body.message,
+        message: text,
         internalOnly,
+        attachmentFileId,
         mentions: mentionCreates.length
           ? { create: mentionCreates }
           : undefined,
@@ -269,7 +314,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
       tags: internalOnly ? ['staff'] : undefined,
     });
 
-    const preview = body.message.slice(0, 120);
+    const preview = (text || '📎 Attachment').slice(0, 120);
     const senderName = req.user!.fullName ?? 'Someone';
     await Promise.all(
       refreshed.members
@@ -309,6 +354,10 @@ export async function markConversationRead(req: Request, res: Response, next: Ne
 
     const messageId = req.body?.message_id as string | undefined;
     const lastReadAt = await markConversationReadService(conversationId, req.user!, messageId);
+    await broadcastConversation(conversationId, {
+      type: 'conversation.read',
+      payload: { userId: req.user!.id, lastReadAt },
+    });
 
     return success(res, { conversationId, lastReadAt });
   } catch (err) {
@@ -339,6 +388,145 @@ export async function markMessageRead(req: Request, res: Response, next: NextFun
       payload: updated,
     });
     return success(res, updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+async function loadOwnMessageForMutation(req: Request) {
+  const message = await prisma.message.findFirst({
+    where: {
+      id: getParam(req, 'id'),
+      conversation: { members: { some: { userId: req.user!.id } } },
+      ...messageInternalFilter(req.user!),
+    },
+    select: { id: true, senderId: true, conversationId: true, internalOnly: true, deletedAt: true, createdAt: true },
+  });
+  if (!message || message.deletedAt) throw new AppError(ErrorCodes.NOT_FOUND, 'Message not found', 404);
+  return message;
+}
+
+async function broadcastMessageUpdate(conversationId: string, messageId: string, internalOnly: boolean) {
+  const full = await prisma.message.findUnique({ where: { id: messageId }, include: messageWithMentionsInclude });
+  if (!full) return;
+  await broadcastConversation(conversationId, {
+    type: 'message.updated',
+    payload: mapMessageWithMentions(full),
+    tags: internalOnly ? ['staff'] : undefined,
+  });
+  return mapMessageWithMentions(full);
+}
+
+/** Edit your own message (text only). */
+export async function editMessage(req: Request, res: Response, next: NextFunction) {
+  try {
+    const msg = await loadOwnMessageForMutation(req);
+    if (msg.senderId !== req.user!.id) throw new AppError(ErrorCodes.FORBIDDEN, 'You can only edit your own messages', 403);
+    await prisma.message.update({ where: { id: msg.id }, data: { message: req.body.message, editedAt: new Date() } });
+    const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
+    return success(res, mapped);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Delete (soft) your own message; admins can delete anyone's. Leaves a "deleted" placeholder. */
+export async function deleteMessage(req: Request, res: Response, next: NextFunction) {
+  try {
+    const msg = await loadOwnMessageForMutation(req);
+    if (msg.senderId !== req.user!.id && req.user!.role !== 'admin') {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'You can only delete your own messages', 403);
+    }
+    await prisma.$transaction([
+      prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date(), message: '' } }),
+      prisma.messageReaction.deleteMany({ where: { messageId: msg.id } }),
+      prisma.messageMention.deleteMany({ where: { messageId: msg.id } }),
+    ]);
+    const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
+    return success(res, mapped);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Toggle an emoji reaction for the current user. */
+export async function toggleReaction(req: Request, res: Response, next: NextFunction) {
+  try {
+    const msg = await loadOwnMessageForMutation(req);
+    const emoji = String(req.body.emoji);
+    const key = { messageId_userId_emoji: { messageId: msg.id, userId: req.user!.id, emoji } };
+    const existing = await prisma.messageReaction.findUnique({ where: key });
+    if (existing) {
+      await prisma.messageReaction.delete({ where: { id: existing.id } });
+    } else {
+      const distinct = await prisma.messageReaction.findMany({
+        where: { messageId: msg.id },
+        distinct: ['emoji'],
+        select: { emoji: true },
+      });
+      if (distinct.length >= 20) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Too many reactions', 400);
+      await prisma.messageReaction.create({ data: { messageId: msg.id, userId: req.user!.id, emoji } });
+    }
+    const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
+    return success(res, mapped);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Ephemeral "is typing" relay. Not stored. */
+export async function typing(req: Request, res: Response, next: NextFunction) {
+  try {
+    const conversationId = getParam(req, 'id');
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, members: { some: { userId: req.user!.id } } },
+      select: { type: true },
+    });
+    if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
+    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+      throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
+    }
+    // Staff typing a team-only note must not show up for the client.
+    const internal = req.user!.role !== 'client' && req.body?.internal_only === true;
+    await broadcastConversation(conversationId, {
+      type: 'typing',
+      payload: { userId: req.user!.id, fullName: req.user!.fullName },
+      tags: internal ? ['staff'] : undefined,
+    });
+    return success(res, { ok: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Download a message attachment. Access = can see the message (member + team-only rules). */
+export async function messageAttachment(req: Request, res: Response, next: NextFunction) {
+  try {
+    const msg = await prisma.message.findFirst({
+      where: {
+        id: getParam(req, 'id'),
+        deletedAt: null,
+        conversation: { members: { some: { userId: req.user!.id } } },
+        ...messageInternalFilter(req.user!),
+      },
+      select: { conversation: { select: { type: true } }, attachment: true },
+    });
+    if (!msg?.attachment) throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
+    if (req.user!.role === 'client' && msg.conversation.type !== 'client_project') {
+      throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
+    }
+    const storage = getStorageProvider();
+    const object = storage.get ? await storage.get(msg.attachment.fileUrl) : null;
+    if (!object) throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
+    const type = object.mimeType || msg.attachment.fileType || 'application/octet-stream';
+    const inline = /^image\/(png|jpe?g|gif|webp)$/i.test(type) && req.query.download !== '1';
+    const safeName = msg.attachment.fileName.replace(/["\r\n]/g, '_');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`);
+    res.setHeader('Content-Type', inline ? type : 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return res.send(Buffer.from(object.body));
   } catch (err) {
     next(err);
   }
