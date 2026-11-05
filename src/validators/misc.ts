@@ -10,10 +10,24 @@ export const createInviteSchema = z.object({
 
 export { createConversationSchema } from './conversations';
 
-export const createMessageSchema = z.object({
-  message: z.string().min(1),
-  internal_only: z.boolean().optional(),
-  mentioned_user_ids: z.array(z.string().uuid()).max(20).optional(),
+export const createMessageSchema = z
+  .object({
+    message: z.string().max(10000).optional().default(''),
+    internal_only: z.boolean().optional(),
+    mentioned_user_ids: z.array(z.string().uuid()).max(20).optional(),
+    attachment_file_id: z.string().uuid().optional(),
+  })
+  .refine((b) => b.message.trim().length > 0 || !!b.attachment_file_id, { message: 'Message is empty' });
+
+export const editMessageSchema = z.object({ message: z.string().trim().min(1).max(10000) });
+
+/** One emoji grapheme (incl. ZWJ sequences / skin tones), max 16 code units. No text. */
+export const reactionSchema = z.object({
+  emoji: z
+    .string()
+    .min(1)
+    .max(16)
+    .refine((e) => /^\p{Extended_Pictographic}/u.test(e) && !/[\p{L}\p{N}\s<>]/u.test(e), 'Must be an emoji'),
 });
 
 export const createApprovalSchema = z.object({

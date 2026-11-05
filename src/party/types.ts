@@ -1,6 +1,9 @@
 export type PartyEventType =
   | 'message.created'
   | 'message.read'
+  | 'message.updated'
+  | 'conversation.read'
+  | 'typing'
   | 'notification.created'
   | 'notification.read'
   | 'notifications.read_all';

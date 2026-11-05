@@ -7,7 +7,12 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
-export function success<T>(res: Response, data: T, statusCode = 200, meta?: PaginationMeta) {
+/** Cursor-paged lists (e.g. chat history). */
+export interface CursorMeta {
+  hasMore: boolean;
+}
+
+export function success<T>(res: Response, data: T, statusCode = 200, meta?: PaginationMeta | CursorMeta) {
   const body: Record<string, unknown> = { success: true, data };
   if (meta) body.meta = meta;
   return res.status(statusCode).json(body);
