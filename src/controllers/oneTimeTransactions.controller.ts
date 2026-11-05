@@ -4,7 +4,8 @@ import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, created } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { assertCanAccessCompany, assertNotClient } from '../permissions/access';
+import { assertCanAccessCompany, assertNotClient, assertRole } from '../permissions/access';
+import { oneTimeMoneyScope, stripCosts } from '../permissions/moneyScope';
 import { companyWhereForUser } from '../permissions/filters';
 import { textContains } from '../lib/searchFilter';
 import { parseMonthRange } from '../lib/monthRange';
@@ -171,6 +172,8 @@ async function getTransactionIfAccessible(req: Request, id: string) {
     throw new AppError(ErrorCodes.NOT_FOUND, 'One-time transaction not found', 404);
   }
   await assertCanAccessCompany(req.user!, existing.companyId);
+  const inScope = await prisma.companyOneTimeTransaction.count({ where: { AND: [{ id: existing.id }, await oneTimeMoneyScope(req.user!)] } });
+  if (!inScope) throw new AppError(ErrorCodes.NOT_FOUND, 'One-time transaction not found', 404);
   return existing;
 }
 
@@ -178,7 +181,7 @@ async function transactionWhereForUser(
   req: Request,
 ): Promise<Prisma.CompanyOneTimeTransactionWhereInput> {
   const companyScope = await companyWhereForUser(req.user!);
-  return { company: companyScope };
+  return { AND: [{ company: companyScope }, await oneTimeMoneyScope(req.user!)] };
 }
 
 async function assertProjectBelongsToCompany(
@@ -251,7 +254,7 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
       orderBy: [{ recognizedAt: 'desc' }, { title: 'asc' }],
     });
 
-    return success(res, rows.map(serializeTransaction));
+    return success(res, rows.map((r) => stripCosts(serializeTransaction(r), req.user!)));
   } catch (err) {
     next(err);
   }
@@ -264,7 +267,10 @@ export async function listForCompany(req: Request, res: Response, next: NextFunc
     await assertCanAccessCompany(req.user!, companyId);
 
     const month = req.query.month as string | undefined;
-    const where: Prisma.CompanyOneTimeTransactionWhereInput = { companyId };
+    const where: Prisma.CompanyOneTimeTransactionWhereInput = {
+      AND: [await oneTimeMoneyScope(req.user!)],
+      companyId,
+    };
     if (month) {
       const { start, end } = parseMonthRange(month);
       where.recognizedAt = { gte: start, lt: end };
@@ -276,7 +282,7 @@ export async function listForCompany(req: Request, res: Response, next: NextFunc
       orderBy: [{ recognizedAt: 'desc' }, { title: 'asc' }],
     });
 
-    return success(res, rows.map(serializeTransaction));
+    return success(res, rows.map((r) => stripCosts(serializeTransaction(r), req.user!)));
   } catch (err) {
     next(err);
   }
@@ -341,7 +347,7 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
       include: includeRelations,
     });
 
-    return created(res, serializeTransaction(row));
+    return created(res, stripCosts(serializeTransaction(row), req.user!));
   } catch (err) {
     next(err);
   }
@@ -414,7 +420,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
       include: includeRelations,
     });
 
-    return success(res, serializeTransaction(row));
+    return success(res, stripCosts(serializeTransaction(row), req.user!));
   } catch (err) {
     next(err);
   }
@@ -435,6 +441,7 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
 export async function listExpenses(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     const transaction = await getTransactionIfAccessible(req, getParam(req, 'id'));
     return success(res, transaction.expenses.map(serializeExpense));
   } catch (err) {
@@ -445,6 +452,7 @@ export async function listExpenses(req: Request, res: Response, next: NextFuncti
 export async function createExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     const transaction = await getTransactionIfAccessible(req, getParam(req, 'id'));
     const {
       name,
@@ -478,6 +486,7 @@ export async function createExpense(req: Request, res: Response, next: NextFunct
 export async function updateExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     await getTransactionIfAccessible(req, getParam(req, 'id'));
     const expenseId = getParam(req, 'expenseId');
     const existing = await prisma.companyOneTimeTransactionExpense.findFirst({
@@ -510,6 +519,7 @@ export async function updateExpense(req: Request, res: Response, next: NextFunct
 export async function removeExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     await getTransactionIfAccessible(req, getParam(req, 'id'));
     const expenseId = getParam(req, 'expenseId');
     const existing = await prisma.companyOneTimeTransactionExpense.findFirst({

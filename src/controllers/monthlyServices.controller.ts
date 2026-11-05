@@ -4,7 +4,8 @@ import { getParam } from '../lib/params';
 import { prisma } from '../lib/prisma';
 import { success, created } from '../lib/apiResponse';
 import { AppError, ErrorCodes } from '../lib/errors';
-import { assertCanAccessCompany, assertNotClient } from '../permissions/access';
+import { assertCanAccessCompany, assertNotClient, assertRole } from '../permissions/access';
+import { monthlyServiceMoneyScope, stripCosts } from '../permissions/moneyScope';
 import { companyWhereForUser } from '../permissions/filters';
 import { mapNestedCompanyLogo } from '../lib/companyResponse';
 import { textContains } from '../lib/searchFilter';
@@ -166,14 +167,14 @@ async function getMonthlyServiceIfAccessible(req: Request, id: string) {
   });
   if (!existing) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
   await assertCanAccessCompany(req.user!, existing.companyId);
+  const inScope = await prisma.companyMonthlyService.count({ where: { AND: [{ id: existing.id }, await monthlyServiceMoneyScope(req.user!)] } });
+  if (!inScope) throw new AppError(ErrorCodes.NOT_FOUND, 'Monthly service not found', 404);
   return existing;
 }
 
 async function monthlyServiceWhereForUser(req: Request): Promise<Prisma.CompanyMonthlyServiceWhereInput> {
   const companyScope = await companyWhereForUser(req.user!);
-  return {
-    company: companyScope,
-  };
+  return { AND: [{ company: companyScope }, await monthlyServiceMoneyScope(req.user!)] };
 }
 
 export async function listAll(req: Request, res: Response, next: NextFunction) {
@@ -206,18 +207,10 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
     } else if (billableOnly) {
       where.serviceCategory = { in: [...BILLABLE_REVENUE_CATEGORIES] };
     }
-    if (salesmanId) {
-      where.company = {
-        ...(typeof where.company === 'object' ? where.company : {}),
-        assignedSalesmanId: salesmanId,
-      };
-    }
-    if (search) {
-      where.company = {
-        ...(typeof where.company === 'object' ? where.company : {}),
-        name: textContains(search),
-      };
-    }
+    const companyFilter: Prisma.CompanyWhereInput = {};
+    if (salesmanId) companyFilter.assignedSalesmanId = salesmanId;
+    if (search) companyFilter.name = textContains(search);
+    if (Object.keys(companyFilter).length) where.company = companyFilter;
 
     const rows = await prisma.companyMonthlyService.findMany({
       where,
@@ -225,7 +218,7 @@ export async function listAll(req: Request, res: Response, next: NextFunction) {
       orderBy: [{ company: { name: 'asc' } }, { serviceCategory: 'asc' }],
     });
 
-    return success(res, rows.map(serializeMonthlyService));
+    return success(res, rows.map((r) => stripCosts(serializeMonthlyService(r), req.user!)));
   } catch (err) {
     next(err);
   }
@@ -241,6 +234,7 @@ export async function listForCompany(req: Request, res: Response, next: NextFunc
 
     const rows = await prisma.companyMonthlyService.findMany({
       where: {
+        AND: [await monthlyServiceMoneyScope(req.user!)],
         companyId,
         ...(billableOnly
           ? { serviceCategory: { in: [...BILLABLE_REVENUE_CATEGORIES] } }
@@ -250,7 +244,7 @@ export async function listForCompany(req: Request, res: Response, next: NextFunc
       orderBy: [{ status: 'asc' }, { serviceCategory: 'asc' }],
     });
 
-    return success(res, rows.map(serializeMonthlyService));
+    return success(res, rows.map((r) => stripCosts(serializeMonthlyService(r), req.user!)));
   } catch (err) {
     next(err);
   }
@@ -303,7 +297,7 @@ export async function createForCompany(req: Request, res: Response, next: NextFu
       include: includeCompany,
     });
 
-    return created(res, serializeMonthlyService(row));
+    return created(res, stripCosts(serializeMonthlyService(row), req.user!));
   } catch (err) {
     next(err);
   }
@@ -364,7 +358,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
       include: includeCompany,
     });
 
-    return success(res, serializeMonthlyService(row));
+    return success(res, stripCosts(serializeMonthlyService(row), req.user!));
   } catch (err) {
     next(err);
   }
@@ -386,6 +380,7 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
 export async function listExpenses(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     const service = await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
     return success(res, service.expenses.map(serializeExpense));
   } catch (err) {
@@ -396,6 +391,7 @@ export async function listExpenses(req: Request, res: Response, next: NextFuncti
 export async function createExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     const service = await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
     const {
       name,
@@ -429,6 +425,7 @@ export async function createExpense(req: Request, res: Response, next: NextFunct
 export async function updateExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
     const expenseId = getParam(req, 'expenseId');
     const existing = await prisma.companyMonthlyServiceExpense.findFirst({
@@ -459,6 +456,7 @@ export async function updateExpense(req: Request, res: Response, next: NextFunct
 export async function removeExpense(req: Request, res: Response, next: NextFunction) {
   try {
     assertNotClient(req.user!);
+    assertRole(req.user!, 'admin'); // contractor costs are admin-only
     await getMonthlyServiceIfAccessible(req, getParam(req, 'id'));
     const expenseId = getParam(req, 'expenseId');
     const existing = await prisma.companyMonthlyServiceExpense.findFirst({
