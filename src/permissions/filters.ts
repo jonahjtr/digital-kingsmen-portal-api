@@ -15,15 +15,8 @@ export async function companyWhereForUser(user: User): Promise<Prisma.CompanyWhe
     const companyIds = await getClientCompanyIds(user.id);
     return { id: { in: companyIds } };
   }
-  if (user.role === 'salesman') {
-    return {
-      OR: [
-        { assignedSalesmanId: user.id },
-        { staffAssignments: { some: { userId: user.id } } },
-        { projects: { some: { assignedSalesmanId: user.id } } },
-      ],
-    };
-  }
+  // Sales sees every client (they sell across the book). Money is scoped separately: moneyScope.ts.
+  if (user.role === 'salesman') return {};
   if (user.role === 'employee') {
     return {
       OR: [
@@ -53,14 +46,7 @@ export async function projectWhereForUser(user: User): Promise<Prisma.ProjectWhe
     const companyIds = await getClientCompanyIds(user.id);
     return { companyId: { in: companyIds } };
   }
-  if (user.role === 'salesman') {
-    return {
-      OR: [
-        { assignedSalesmanId: user.id },
-        { company: { assignedSalesmanId: user.id } },
-      ],
-    };
-  }
+  if (user.role === 'salesman') return {};
   if (user.role === 'employee') {
     return {
       OR: [
@@ -86,7 +72,7 @@ export async function taskWhereForUser(user: User): Promise<Prisma.TaskWhereInpu
   const projectWhere = await projectWhereForUser(user);
   const companyWhere = await companyWhereForUser(user);
 
-  if (user.role === 'admin') return {};
+  if (user.role === 'admin' || user.role === 'salesman') return {};
   if (user.role === 'client') {
     return {
       AND: [
