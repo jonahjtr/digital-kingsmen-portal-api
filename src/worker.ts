@@ -34,4 +34,10 @@ export default {
     if (partyResponse) return partyResponse;
     return httpHandler.fetch(request, cfEnv, ctx);
   },
+  // Hourly housekeeping (wrangler.toml [triggers]). Add future jobs here.
+  async scheduled(_event: ScheduledController, cfEnv: CloudflareBindings, ctx: ExecutionContext): Promise<void> {
+    initBindings(cfEnv);
+    const { autoCloseResolved } = await import('./tickets');
+    ctx.waitUntil(autoCloseResolved().then((n) => console.log(`[cron] auto-closed ${n} tickets`)));
+  },
 };

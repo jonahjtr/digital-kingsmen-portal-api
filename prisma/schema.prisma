@@ -198,6 +198,9 @@ model User {
   gbpPostsCreated           GbpPost[]
   mcpTokens                 McpToken[]
   messageReactions          MessageReaction[]
+  ticketsRequested          Ticket[]          @relation("TicketRequester")
+  ticketsAssigned           Ticket[]          @relation("TicketAssignee")
+  ticketEvents              TicketEvent[]
 
   @@map("users")
 }
@@ -253,6 +256,7 @@ model Company {
 
   @@index([assignedSalesmanId])
   @@map("companies")
+  tickets Ticket[]
 }
 
 model GbpLocation {
@@ -511,6 +515,7 @@ model Project {
 
   @@index([companyId, status])
   @@map("projects")
+  tickets Ticket[]
 }
 
 model ProjectTeamMember {
@@ -731,6 +736,7 @@ model File {
   messages Message[]
 
   @@map("files")
+  ticketEvents TicketEvent[]
 }
 
 model Approval {
@@ -953,4 +959,58 @@ model MessageReaction {
   @@unique([messageId, userId, emoji])
   @@index([messageId])
   @@map("message_reactions")
+}
+
+/// Client support tickets. Category/status/priority are config-driven strings (src/tickets/config.ts)
+/// so new values never need a migration. Everything that happens is a TicketEvent.
+model Ticket {
+  id              String    @id @default(uuid())
+  number          Int       @unique
+  companyId       String    @map("company_id")
+  projectId       String?   @map("project_id")
+  requesterId     String    @map("requester_id")
+  assigneeId      String?   @map("assignee_id")
+  category        String
+  priority        String
+  status          String
+  title           String
+  source          String    @default("portal")
+  customFields    String    @default("{}") @map("custom_fields")
+  firstResponseDueAt DateTime? @map("first_response_due_at")
+  resolutionDueAt DateTime? @map("resolution_due_at")
+  firstResponseAt DateTime? @map("first_response_at")
+  resolvedAt      DateTime? @map("resolved_at")
+  lastActivityAt  DateTime  @default(now()) @map("last_activity_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project   Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  requester User          @relation("TicketRequester", fields: [requesterId], references: [id])
+  assignee  User?         @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  events    TicketEvent[]
+
+  @@index([companyId, status])
+  @@index([assigneeId, status])
+  @@index([status, lastActivityAt])
+  @@map("tickets")
+}
+
+model TicketEvent {
+  id               String   @id @default(uuid())
+  ticketId         String   @map("ticket_id")
+  actorId          String?  @map("actor_id")
+  kind             String
+  body             String   @default("")
+  data             String   @default("{}")
+  internal         Boolean  @default(false)
+  attachmentFileId String?  @map("attachment_file_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  ticket     Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor      User?  @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  attachment File?  @relation(fields: [attachmentFileId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_events")
 }
