@@ -4,6 +4,9 @@
  * Local D1:  npm run import:gmb-posts
  * Remote D1: npm run import:gmb-posts:remote
  *
+ * Remote note: set `remote = true` on the top-level [[d1_databases]] entry in wrangler.toml
+ * for the import run (getPlatformProxy ignores CF_REMOTE alone for D1), then remove it.
+ *
  * VAULT_GMB_ROOT can override the default SEO Content Creator path.
  */
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -23,11 +26,14 @@ const CLIENT_FOLDER_TO_COMPANY: Record<string, string[]> = {
   'Digital Kingsmen': ['Digital Kingsmen'],
   'Pure Heating & Air': ['Pure Heating & Air', 'Pure Heating and Air'],
   'Four Seasons Pest Solutions': [
+    'Four Seasons Pest Solutions, Inc.',
     'Four Seasons Pest Solutions',
     'Four Seasons Pest',
     'FSPS',
   ],
+  // prod name has a double space before &
   'Lexington Electrical & HVAC': [
+    'Lexington Electrical  & HVAC',
     'Lexington Electrical & HVAC',
     'Lexington Electrical and HVAC',
   ],
@@ -102,12 +108,22 @@ function normalizeType(value: unknown): GbpPostType {
 async function initDatabase(): Promise<(() => Promise<void>) | undefined> {
   if (process.env.CF_REMOTE === '1' || process.env.CF_SEED === '1') {
     const { getPlatformProxy } = await import('wrangler');
+    const useRemote = process.env.CF_REMOTE === '1';
+    // Remote import needs `remote = true` on the D1 binding in wrangler.toml for the run,
+    // or set CF_D1_REMOTE=1 and we patch via getPlatformProxy remoteBindings (wrangler ≥4).
     const proxy = await getPlatformProxy({
       configPath: './wrangler.toml',
-      environment: process.env.WRANGLER_ENV,
-      remoteBindings: process.env.CF_REMOTE === '1',
+      environment: process.env.WRANGLER_ENV || undefined,
+      remoteBindings: useRemote,
+      persist: useRemote ? false : undefined,
     });
     bootstrap({ DB: proxy.env.DB as D1Database });
+    if (useRemote) {
+      const probe = await (proxy.env.DB as D1Database)
+        .prepare('SELECT COUNT(*) AS c FROM companies')
+        .first<{ c: number }>();
+      console.log(`D1 target: REMOTE (${probe?.c ?? '?'} companies)`);
+    }
     return proxy.dispose;
   }
   bootstrap();

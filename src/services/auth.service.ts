@@ -1,7 +1,7 @@
 import { User } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { hashPassword, comparePassword } from '../lib/password';
-import { signToken, getExpiresInSeconds } from '../lib/jwt';
+import { signToken, getExpiresInSeconds, SESSION_JWT_EXPIRES_IN } from '../lib/jwt';
 import { sanitizeUser } from '../lib/sanitize';
 import { AppError, ErrorCodes } from '../lib/errors';
 import {
@@ -57,7 +57,7 @@ export async function register(data: {
   };
 }
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, remember = true) {
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
   });
@@ -71,10 +71,11 @@ export async function login(email: string, password: string) {
     throw new AppError(ErrorCodes.INVALID_CREDENTIALS, 'Invalid email or password', 401);
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  const expiresIn = remember ? undefined : SESSION_JWT_EXPIRES_IN;
+  const token = signToken({ sub: user.id, email: user.email, role: user.role }, expiresIn);
   return {
     accessToken: token,
-    expiresIn: getExpiresInSeconds(),
+    expiresIn: getExpiresInSeconds(expiresIn),
     user: sanitizeUser(user),
   };
 }

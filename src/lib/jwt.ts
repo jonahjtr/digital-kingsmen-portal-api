@@ -8,16 +8,18 @@ export interface JwtPayload {
   role: UserRole;
 }
 
-export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] });
+export const SESSION_JWT_EXPIRES_IN = '24h';
+
+export function signToken(payload: JwtPayload, expiresIn = env.JWT_EXPIRES_IN): string {
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
 }
 
 export function verifyToken(token: string): JwtPayload {
   return jwt.verify(token, env.JWT_SECRET) as JwtPayload;
 }
 
-export function getExpiresInSeconds(): number {
-  const match = env.JWT_EXPIRES_IN.match(/^(\d+)([dhms])$/);
+export function getExpiresInSeconds(expiresIn = env.JWT_EXPIRES_IN): number {
+  const match = expiresIn.match(/^(\d+)([dhms])$/);
   if (!match) return 7 * 24 * 60 * 60;
   const value = parseInt(match[1], 10);
   const unit = match[2];

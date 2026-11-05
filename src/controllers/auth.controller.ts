@@ -14,7 +14,7 @@ export async function register(req: Request, res: Response, next: NextFunction) 
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await authService.login(req.body.email, req.body.password);
+    const result = await authService.login(req.body.email, req.body.password, req.body.remember);
     return success(res, result);
   } catch (err) {
     next(err);

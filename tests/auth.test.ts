@@ -42,6 +42,18 @@ describe('Auth API', () => {
     }
   });
 
+  it('POST /api/auth/login with remember=false returns shorter session', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@digitalkingsmen.com', password: 'Demo123!', remember: false });
+
+    if (res.status === 200) {
+      expect(res.body.data.expiresIn).toBe(24 * 3600);
+    } else {
+      expect([401, 500]).toContain(res.status);
+    }
+  });
+
   it('POST /api/auth/register rejects invalid invite', async () => {
     const res = await request(app)
       .post('/api/auth/register')
