@@ -442,6 +442,28 @@ export async function getEventAttachment(user: User, eventId: string) {
   return ev.attachment;
 }
 
+/** Tick/untick the Nth "- [ ]" line of a reply/note/description. Anyone who can see the event can tick it. */
+export const CHECK_RE = /^(\s*[-*]\s+\[)([ xX])(\]\s)/;
+export function toggleChecklistLine(body: string, line: number, checked: boolean) {
+  let n = -1;
+  return body
+    .split('\n')
+    .map((l) => (CHECK_RE.test(l) && ++n === line ? l.replace(CHECK_RE, `$1${checked ? 'x' : ' '}$3`) : l))
+    .join('\n');
+}
+
+export async function toggleChecklist(user: User, eventId: string, line: number, checked: boolean) {
+  const ev = await prisma.ticketEvent.findUnique({ where: { id: eventId }, select: { ticketId: true, internal: true, body: true } });
+  if (!ev?.body || (ev.internal && !isStaff(user))) throw new AppError(ErrorCodes.NOT_FOUND, 'Not found', 404);
+  await getTicketForUser(user, ev.ticketId); // visibility check
+  const body = toggleChecklistLine(ev.body, line, checked);
+  if (body !== ev.body) {
+    await prisma.ticketEvent.update({ where: { id: eventId }, data: { body } });
+    await prisma.ticket.update({ where: { id: ev.ticketId }, data: { lastActivityAt: new Date() } });
+  }
+  return { body };
+}
+
 // ------------------------------------------------------------------ housekeeping
 
 /** Close tickets that have sat in "resolved" for AUTO_CLOSE_DAYS. Called by the scheduled worker. */
