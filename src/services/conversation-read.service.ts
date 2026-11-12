@@ -107,7 +107,7 @@ type ConversationWithPreview = {
   updatedAt: Date;
   project: { id: string; name: string } | null;
   company: { id: string; name: string } | null;
-  messages: Array<{ message: string; createdAt: Date }>;
+  messages: Array<{ message: string; createdAt: Date; attachment?: { fileType: string | null } | null }>;
 };
 
 export async function mapConversationWithUnread(
@@ -144,7 +144,9 @@ export async function mapConversationWithUnread(
     project: conversation.project,
     company: conversation.company,
     lastMessageAt: last?.createdAt ?? conversation.updatedAt,
-    lastMessagePreview: last?.message?.slice(0, 120) ?? null,
+    lastMessagePreview:
+      last?.message?.slice(0, 120) ||
+      (last?.attachment ? (/^audio\//i.test(last.attachment.fileType ?? '') ? '🎤 Voice memo' : '📎 Attachment') : null),
     unreadCount,
     isInternal: conversation.type !== 'client_project' && conversation.type !== 'direct',
     isDirect: conversation.type === 'direct',
@@ -170,7 +172,7 @@ export async function recentConversationsForUser(
     include: {
       project: { select: { id: true, name: true } },
       company: { select: { id: true, name: true } },
-      messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
+      messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' }, include: { attachment: { select: { fileType: true } } } },
       members: { where: { userId: user.id }, take: 1 },
     },
   });

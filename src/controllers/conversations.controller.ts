@@ -35,7 +35,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       where: { members: { some: { userId } } },
       include: {
         members: { where: { userId }, take: 1 },
-        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
+        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' }, include: { attachment: { select: { fileType: true } } } },
         project: { select: { id: true, name: true } },
         company: { select: { id: true, name: true } },
       },
@@ -55,7 +55,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       where: { members: { some: { userId } } },
       include: {
         members: { where: { userId }, take: 1 },
-        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
+        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' }, include: { attachment: { select: { fileType: true } } } },
         project: { select: { id: true, name: true } },
         company: { select: { id: true, name: true } },
       },
@@ -287,14 +287,16 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     const mentionCreates = buildMentionCreates(mentionedUserIds);
 
     let attachmentFileId: string | undefined;
+    let isVoice = false;
     if (body.attachment_file_id) {
       // Only your own upload, and only one that isn't already attached elsewhere.
       const file = await prisma.file.findFirst({
         where: { id: body.attachment_file_id, uploadedBy: req.user!.id, messages: { none: {} } },
-        select: { id: true },
+        select: { id: true, fileType: true },
       });
       if (!file) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Attachment not found', 400);
       attachmentFileId = file.id;
+      isVoice = /^audio\//i.test(file.fileType ?? '');
     }
     const text = typeof body.message === 'string' ? body.message : '';
     if (!text.trim() && !attachmentFileId) {
@@ -326,7 +328,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
       tags: internalOnly ? ['staff'] : undefined,
     });
 
-    const preview = (text || '📎 Attachment').slice(0, 120);
+    const preview = (text || (isVoice ? '🎤 Voice memo' : '📎 Attachment')).slice(0, 120);
     const senderName = req.user!.fullName ?? 'Someone';
     await Promise.all(
       refreshed.members
@@ -435,9 +437,37 @@ export async function editMessage(req: Request, res: Response, next: NextFunctio
   try {
     const msg = await loadOwnMessageForMutation(req);
     if (msg.senderId !== req.user!.id) throw new AppError(ErrorCodes.FORBIDDEN, 'You can only edit your own messages', 403);
-    await prisma.message.update({ where: { id: msg.id }, data: { message: req.body.message, editedAt: new Date() } });
+    const current = await prisma.message.findUniqueOrThrow({ where: { id: msg.id }, select: { message: true } });
+    if (current.message === req.body.message) {
+      return success(res, await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly));
+    }
+    // Keep every prior version so anyone in the thread can see what it said before.
+    await prisma.$transaction([
+      prisma.messageEdit.create({ data: { messageId: msg.id, previousMessage: current.message } }),
+      prisma.message.update({ where: { id: msg.id }, data: { message: req.body.message, editedAt: new Date() } }),
+    ]);
     const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
     return success(res, mapped);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Edit history (oldest first) + the current text. Same visibility as the message itself. */
+export async function listMessageEdits(req: Request, res: Response, next: NextFunction) {
+  try {
+    const msg = await loadOwnMessageForMutation(req);
+    const [edits, current] = await Promise.all([
+      prisma.messageEdit.findMany({ where: { messageId: msg.id }, orderBy: { editedAt: 'asc' } }),
+      prisma.message.findUniqueOrThrow({ where: { id: msg.id }, select: { message: true, editedAt: true } }),
+    ]);
+    return success(res, {
+      original: edits[0]?.previousMessage ?? current.message,
+      versions: [
+        ...edits.map((e, i) => ({ text: e.previousMessage, at: i === 0 ? msg.createdAt : edits[i - 1].editedAt })),
+        { text: current.message, at: edits.at(-1)?.editedAt ?? msg.createdAt, current: true },
+      ],
+    });
   } catch (err) {
     next(err);
   }
@@ -454,6 +484,7 @@ export async function deleteMessage(req: Request, res: Response, next: NextFunct
       prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date(), message: '' } }),
       prisma.messageReaction.deleteMany({ where: { messageId: msg.id } }),
       prisma.messageMention.deleteMany({ where: { messageId: msg.id } }),
+      prisma.messageEdit.deleteMany({ where: { messageId: msg.id } }),
     ]);
     const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
     return success(res, mapped);
@@ -531,8 +562,9 @@ export async function messageAttachment(req: Request, res: Response, next: NextF
     const storage = getStorageProvider();
     const object = storage.get ? await storage.get(msg.attachment.fileUrl) : null;
     if (!object) throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
-    const type = object.mimeType || msg.attachment.fileType || 'application/octet-stream';
-    const inline = /^image\/(png|jpe?g|gif|webp)$/i.test(type) && req.query.download !== '1';
+    const type = (object.mimeType || msg.attachment.fileType || 'application/octet-stream').split(';')[0].trim();
+    // Images + voice memos render inline; everything else is forced to download.
+    const inline = /^(image\/(png|jpe?g|gif|webp)|audio\/(webm|ogg|mp4|mpeg|aac|x-m4a))$/i.test(type) && req.query.download !== '1';
     const safeName = msg.attachment.fileName.replace(/["\r\n]/g, '_');
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`);
     res.setHeader('Content-Type', inline ? type : 'application/octet-stream');

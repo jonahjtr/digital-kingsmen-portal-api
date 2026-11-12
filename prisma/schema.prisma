@@ -697,6 +697,7 @@ model Message {
   attachment   File?             @relation(fields: [attachmentFileId], references: [id], onDelete: SetNull)
   mentions     MessageMention[]
   reactions    MessageReaction[]
+  edits        MessageEdit[]
 
   @@index([conversationId, createdAt])
   @@map("messages")
@@ -946,6 +947,18 @@ model McpAuditLog {
 
   @@index([tokenId, createdAt])
   @@map("mcp_audit_log")
+}
+
+model MessageEdit {
+  id              String   @id @default(uuid())
+  messageId       String   @map("message_id")
+  previousMessage String   @map("previous_message")
+  editedAt        DateTime @default(now()) @map("edited_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("message_edits")
 }
 
 model MessageReaction {
