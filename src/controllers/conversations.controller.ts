@@ -22,7 +22,10 @@ import {
   ensureConversationMembers,
   ensureProjectConversation,
   resolveDefaultMemberIds,
+  listDirectCandidates,
+  openDirectConversation,
 } from '../services/conversation-members.service';
+import { clientCanSee } from '../services/conversation-read.service';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -32,7 +35,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       where: { members: { some: { userId } } },
       include: {
         members: { where: { userId }, take: 1 },
-        messages: { take: 1, orderBy: { createdAt: 'desc' } },
+        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
         project: { select: { id: true, name: true } },
         company: { select: { id: true, name: true } },
       },
@@ -52,7 +55,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       where: { members: { some: { userId } } },
       include: {
         members: { where: { userId }, take: 1 },
-        messages: { take: 1, orderBy: { createdAt: 'desc' } },
+        messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
         project: { select: { id: true, name: true } },
         company: { select: { id: true, name: true } },
       },
@@ -61,7 +64,7 @@ export async function list(req: Request, res: Response, next: NextFunction) {
 
     const filtered = refreshed.filter((c) => {
       if (user.role === 'client') {
-        return c.type === 'client_project';
+        return clientCanSee(c.type);
       }
       return c.type !== 'internal_project';
     });
@@ -90,6 +93,14 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function directCandidates(req: Request, res: Response, next: NextFunction) {
+  try {
+    return success(res, await listDirectCandidates(req.user!));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
     const conversation = await prisma.conversation.findFirst({
@@ -103,7 +114,7 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
       },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
     // Clients must not learn staff emails; staff see everything.
@@ -133,7 +144,7 @@ export async function getForProject(req: Request, res: Response, next: NextFunct
       },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
     return success(res, conversation);
@@ -146,6 +157,7 @@ export async function create(req: Request, res: Response, next: NextFunction) {
   try {
     const body = req.body;
     if (body.project_id) await assertCanAccessProject(req.user!, body.project_id);
+    if (body.type === 'direct') return created(res, await openDirectConversation(req.user!, body.member_ids));
     if (req.user!.role === 'client' && body.type !== 'client_project') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Clients can only create client project conversations', 403);
     }
@@ -192,7 +204,7 @@ export async function listMessages(req: Request, res: Response, next: NextFuncti
       where: { id: getParam(req, 'id'), members: { some: { userId: req.user!.id } } },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
     const conversationId = getParam(req, 'id');
@@ -248,7 +260,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
       },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
 
@@ -348,7 +360,7 @@ export async function markConversationRead(req: Request, res: Response, next: Ne
       where: { id: conversationId, members: { some: { userId: req.user!.id } } },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
 
@@ -484,7 +496,7 @@ export async function typing(req: Request, res: Response, next: NextFunction) {
       select: { type: true },
     });
     if (!conversation) throw new AppError(ErrorCodes.NOT_FOUND, 'Conversation not found', 404);
-    if (req.user!.role === 'client' && conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(conversation.type)) {
       throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
     }
     // Staff typing a team-only note must not show up for the client.
@@ -513,7 +525,7 @@ export async function messageAttachment(req: Request, res: Response, next: NextF
       select: { conversation: { select: { type: true } }, attachment: true },
     });
     if (!msg?.attachment) throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
-    if (req.user!.role === 'client' && msg.conversation.type !== 'client_project') {
+    if (req.user!.role === 'client' && !clientCanSee(msg.conversation.type)) {
       throw new AppError(ErrorCodes.NOT_FOUND, 'Attachment not found', 404);
     }
     const storage = getStorageProvider();

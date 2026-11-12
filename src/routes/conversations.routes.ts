@@ -10,6 +10,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', conversationsController.list);
+router.get('/direct-candidates', conversationsController.directCandidates);
 router.get(
   '/by-project/:projectId',
   validate(projectIdParamSchema, 'params'),

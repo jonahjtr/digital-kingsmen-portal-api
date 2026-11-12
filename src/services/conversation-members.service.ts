@@ -1,5 +1,8 @@
 import { ConversationType, UserRole } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { AppError, ErrorCodes } from '../lib/errors';
+import { companyWhereForUser } from '../permissions/filters';
+import type { Prisma, User } from '@prisma/client';
 
 const CLIENT_ROLE: UserRole = 'client';
 
@@ -211,4 +214,68 @@ export async function backfillAllProjectConversations(): Promise<{ projects: num
     await ensureProjectConversation(project.id);
   }
   return { projects: projects.length };
+}
+
+/**
+ * 1:1 thread between the caller and one other active user. Reuses the existing pair
+ * thread if there is one. Only staff can start a DM (clients can reply in one).
+ */
+/** Who a staff user may DM: all active staff + clients of companies they can see. */
+export async function directCandidateWhere(me: User): Promise<Prisma.UserWhereInput> {
+  return {
+    isActive: true,
+    id: { not: me.id },
+    OR: [
+      { role: { not: CLIENT_ROLE } },
+      { role: CLIENT_ROLE, companyUsers: { some: { company: await companyWhereForUser(me) } } },
+    ],
+  };
+}
+
+export async function listDirectCandidates(me: User) {
+  if (me.role === CLIENT_ROLE) throw new AppError(ErrorCodes.FORBIDDEN, 'Access denied', 403);
+  const users = await prisma.user.findMany({
+    where: await directCandidateWhere(me),
+    orderBy: { fullName: 'asc' },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      companyUsers: { take: 1, select: { company: { select: { name: true } } } },
+    },
+  });
+  return users.map(({ companyUsers, ...u }) => ({ ...u, companyName: companyUsers[0]?.company.name ?? null }));
+}
+
+export async function openDirectConversation(
+  me: User,
+  memberIds: string[] | undefined,
+) {
+  if (me.role === CLIENT_ROLE) {
+    throw new AppError(ErrorCodes.FORBIDDEN, 'Clients cannot start direct messages', 403);
+  }
+  const otherId = memberIds?.find((id) => id !== me.id);
+  if (!otherId || (memberIds?.filter((id) => id !== me.id).length ?? 0) !== 1) {
+    throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Pick exactly one person to message', 400);
+  }
+  const other = await prisma.user.findFirst({
+    where: { AND: [{ id: otherId }, await directCandidateWhere(me)] },
+    select: { id: true },
+  });
+  if (!other) throw new AppError(ErrorCodes.NOT_FOUND, 'User not found', 404);
+
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      type: 'direct',
+      AND: [{ members: { some: { userId: me.id } } }, { members: { some: { userId: otherId } } }],
+    },
+    include: { members: true },
+  });
+  if (existing) return existing;
+
+  return prisma.conversation.create({
+    data: { type: 'direct', members: { create: [{ userId: me.id }, { userId: otherId }] } },
+    include: { members: true },
+  });
 }
