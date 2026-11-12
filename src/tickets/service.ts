@@ -296,6 +296,7 @@ export async function listEvents(user: User, ticketId: string) {
     include: {
       actor: { select: { id: true, fullName: true, role: true } },
       attachment: { select: { id: true, fileName: true, fileType: true, fileSize: true } },
+      _count: { select: { revisions: true } },
     },
   });
   return events.map((e) => ({
@@ -305,6 +306,8 @@ export async function listEvents(user: User, ticketId: string) {
     data: safeJson(e.data),
     internal: e.internal,
     createdAt: e.createdAt,
+    editedAt: e.editedAt,
+    revisionCount: e._count.revisions,
     // Clients see "Digital Kingsmen" team members by name but never their role/email.
     actor: e.actor ? { id: e.actor.id, fullName: e.actor.fullName, isStaff: e.actor.role !== 'client' } : null,
     attachment: e.attachment,
@@ -481,6 +484,42 @@ export async function toggleChecklist(user: User, eventId: string, line: number,
     await prisma.ticket.update({ where: { id: ev.ticketId }, data: { lastActivityAt: new Date() } });
   }
   return { body };
+}
+
+const EDITABLE_KINDS = ['created', 'reply', 'note'];
+
+/** Load an event the user can see (internal notes are staff-only). Not found and not allowed look the same. */
+async function visibleEvent(user: User, eventId: string) {
+  const ev = await prisma.ticketEvent.findUnique({ where: { id: eventId } });
+  if (!ev || (ev.internal && !isStaff(user))) throw new AppError(ErrorCodes.NOT_FOUND, 'Not found', 404);
+  await getTicketForUser(user, ev.ticketId);
+  return ev;
+}
+
+/** Edit your own message. The old text is kept as a revision so the history can be viewed. */
+export async function editEvent(user: User, eventId: string, body: string) {
+  const ev = await visibleEvent(user, eventId);
+  if (ev.actorId !== user.id || !EDITABLE_KINDS.includes(ev.kind)) {
+    throw new AppError(ErrorCodes.FORBIDDEN, 'You can only edit your own messages', 403);
+  }
+  const next = body.trim();
+  if (!next && !ev.attachmentFileId) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Message is empty', 400);
+  if (next === ev.body) return;
+  await prisma.ticketEventRevision.create({ data: { eventId: ev.id, body: ev.body, editorId: user.id } });
+  await prisma.ticketEvent.update({ where: { id: ev.id }, data: { body: next, editedAt: new Date() } });
+  const t = await prisma.ticket.update({ where: { id: ev.ticketId }, data: { lastActivityAt: new Date() } });
+  // Realtime refresh only (kind 'edited' isn't in the notify switch, so nobody gets pinged for an edit).
+  await emitTicketEvent({ kind: 'edited', ticket: t, actor: user, eventId: ev.id, internal: ev.internal });
+}
+
+/** Every version of a message, oldest (original) first, ending with the current text. */
+export async function eventRevisions(user: User, eventId: string) {
+  const ev = await visibleEvent(user, eventId);
+  const revs = await prisma.ticketEventRevision.findMany({ where: { eventId: ev.id }, orderBy: { createdAt: 'asc' } });
+  // Each revision row holds the text that was replaced at that moment; the version itself dates from the edit before it.
+  const versions = revs.map((r, i) => ({ body: r.body, at: i === 0 ? ev.createdAt : revs[i - 1].createdAt, current: false }));
+  versions.push({ body: ev.body, at: ev.editedAt ?? ev.createdAt, current: true });
+  return versions;
 }
 
 // ------------------------------------------------------------------ housekeeping
