@@ -41,6 +41,7 @@ const updateSchema = z.object({
   priority: z.enum(PRIORITY_KEYS).optional(),
   category: z.enum(CATEGORY_KEYS).optional(),
   assignee_id: uuid.nullable().optional(),
+  assignee_ids: z.array(uuid).max(20).optional(),
   title: z.string().trim().min(3).max(200).optional(),
   custom_fields: z.record(z.string(), z.unknown()).optional(),
 });
@@ -112,6 +113,7 @@ router.patch(
       priority: b.priority,
       category: b.category,
       assigneeId: b.assignee_id,
+      assigneeIds: b.assignee_ids,
       title: b.title,
       customFields: b.custom_fields,
     });

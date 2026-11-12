@@ -201,6 +201,7 @@ model User {
   messageReactions          MessageReaction[]
   ticketsRequested          Ticket[]          @relation("TicketRequester")
   ticketsAssigned           Ticket[]          @relation("TicketAssignee")
+  ticketAssignments         TicketAssignee[]  @relation("TicketAssignees")
   ticketEvents              TicketEvent[]
 
   @@map("users")
@@ -990,11 +991,26 @@ model Ticket {
   requester User          @relation("TicketRequester", fields: [requesterId], references: [id])
   assignee  User?         @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   events    TicketEvent[]
+  assignees TicketAssignee[]
 
   @@index([companyId, status])
   @@index([assigneeId, status])
   @@index([status, lastActivityAt])
   @@map("tickets")
+}
+
+/// Everyone working a ticket. tickets.assignee_id mirrors the first one (the lead) for older callers.
+model TicketAssignee {
+  ticketId  String   @map("ticket_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation("TicketAssignees", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("ticket_assignees")
 }
 
 model TicketEvent {

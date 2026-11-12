@@ -102,6 +102,11 @@ export async function applyD1SchemaPatches(db: D1Database): Promise<void> {
   await runPatch(db, `CREATE TABLE IF NOT EXISTS "ticket_events" ( "id" TEXT NOT NULL PRIMARY KEY, "ticket_id" TEXT NOT NULL, "actor_id" TEXT, "kind" TEXT NOT NULL, "body" TEXT NOT NULL DEFAULT '', "data" TEXT NOT NULL DEFAULT '{}', "internal" BOOLEAN NOT NULL DEFAULT false, "attachment_file_id" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ticket_events_ticket_id_fkey" FOREIGN KEY ("ticket_id") REFERENCES "tickets" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ticket_events_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "users" ("id") ON DELETE SET NULL ON UPDATE CASCADE, CONSTRAINT "ticket_events_attachment_file_id_fkey" FOREIGN KEY ("attachment_file_id") REFERENCES "files" ("id") ON DELETE SET NULL ON UPDATE CASCADE )`);
   await runPatch(db, `CREATE INDEX IF NOT EXISTS "ticket_events_ticket_id_created_at_idx" ON "ticket_events"("ticket_id", "created_at")`);
 
+  // Ticket assignees (0025)
+  await runPatch(db, `CREATE TABLE IF NOT EXISTS "ticket_assignees" ( "ticket_id" TEXT NOT NULL, "user_id" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("ticket_id", "user_id"), CONSTRAINT "ticket_assignees_ticket_id_fkey" FOREIGN KEY ("ticket_id") REFERENCES "tickets" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ticket_assignees_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE );`);
+  await runPatch(db, `CREATE INDEX IF NOT EXISTS "ticket_assignees_user_id_idx" ON "ticket_assignees"("user_id");`);
+  await runPatch(db, `INSERT OR IGNORE INTO "ticket_assignees" ("ticket_id", "user_id") SELECT "id", "assignee_id" FROM "tickets" WHERE "assignee_id" IS NOT NULL;`);
+
   // Messaging: edit/delete, attachments, reactions (0023)
   await runPatch(db, `ALTER TABLE "messages" ADD COLUMN "edited_at" DATETIME`);
   await runPatch(db, `ALTER TABLE "messages" ADD COLUMN "deleted_at" DATETIME`);
