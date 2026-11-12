@@ -104,9 +104,34 @@ describe('Direct messages', () => {
     expect(h.body.data.original).toBe('v1 original');
     expect(h.body.data.versions.map((v: { text: string }) => v.text)).toEqual(['v1 original', 'v2', 'v3 final']);
     expect((await request(app).get(`/api/messages/${id}/edits`).set(as(pm))).status).toBe(404);
-    await request(app).delete(`/api/messages/${id}`).set(as(admin));
+  });
+
+  it('deleted messages: hidden from everyone in the thread, admins can view what it said', async () => {
+    const m = await request(app).post(`/api/conversations/${dmId}/messages`).set(as(client)).send({ message: 'first draft' });
+    const id = m.body.data.id;
+    await request(app).patch(`/api/messages/${id}`).set(as(client)).send({ message: 'oops wrong thing' });
+    expect((await request(app).delete(`/api/messages/${id}`).set(as(client))).status).toBe(200);
+
+    const page = await request(app).get(`/api/conversations/${dmId}/messages?cursor=latest`).set(as(client));
+    const row = (page.body.data as Array<{ id: string; message: string; deletedAt: string | null }>).find((x) => x.id === id)!;
+    expect(row.deletedAt).toBeTruthy();
+    expect(row.message).toBe('');
     expect((await request(app).get(`/api/messages/${id}/edits`).set(as(client))).status).toBe(404);
-    expect(await prisma.messageEdit.count({ where: { messageId: id } })).toBe(0);
+
+    // non-admins (incl. the author) can't recover it
+    expect((await request(app).get(`/api/messages/${id}/deleted`).set(as(client))).status).toBe(404);
+    // admin outside the thread can't either
+    const other = await request(app).get(`/api/messages/${id}/deleted`).set(as(pm));
+    expect(other.status).toBe(404);
+
+    const d = await request(app).get(`/api/messages/${id}/deleted`).set(as(admin));
+    expect(d.status).toBe(200);
+    expect(d.body.data.versions.map((v: { text: string }) => v.text)).toEqual(['first draft', 'oops wrong thing']);
+    expect(d.body.data.deletedAt).toBeTruthy();
+
+    // live (not deleted) messages are not served by the deleted endpoint
+    const live = await request(app).post(`/api/conversations/${dmId}/messages`).set(as(admin)).send({ message: 'still here' });
+    expect((await request(app).get(`/api/messages/${live.body.data.id}/deleted`).set(as(admin))).status).toBe(404);
   });
 
   it('a third person cannot see or post in the DM', async () => {

@@ -35,6 +35,7 @@ messageRoutes.patch('/:id/read', validate(idParamSchema, 'params'), conversation
 messageRoutes.patch('/:id', validate(idParamSchema, 'params'), validate(editMessageSchema), conversationsController.editMessage);
 messageRoutes.get('/:id/attachment', validate(idParamSchema, 'params'), conversationsController.messageAttachment);
 messageRoutes.delete('/:id', validate(idParamSchema, 'params'), conversationsController.deleteMessage);
+messageRoutes.get('/:id/deleted', validate(idParamSchema, 'params'), conversationsController.getDeletedMessage);
 messageRoutes.get('/:id/edits', validate(idParamSchema, 'params'), conversationsController.listMessageEdits);
 messageRoutes.post('/:id/reactions', validate(idParamSchema, 'params'), validate(reactionSchema), conversationsController.toggleReaction);
 
