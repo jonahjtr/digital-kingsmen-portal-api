@@ -406,7 +406,11 @@ export async function updateTicket(
     if (added.length || removed.length || (nextIds[0] ?? null) !== t.assigneeId) {
       for (const id of added) await assertAssignable(id);
       await prisma.ticketAssignee.deleteMany({ where: { ticketId: t.id, userId: { in: removed } } });
-      for (const id of added) await prisma.ticketAssignee.create({ data: { ticketId: t.id, userId: id } });
+      // Stagger created_at by 1ms so the picked order (lead first) survives ORDER BY created_at.
+      const base = Date.now();
+      for (const [i, id] of added.entries()) {
+        await prisma.ticketAssignee.create({ data: { ticketId: t.id, userId: id, createdAt: new Date(base + i) } });
+      }
       data.assigneeId = nextIds[0] ?? null;
       assigneesChanged = true;
       changes.push(['assigned', { from: t.assigneeId, to: nextIds[0] ?? null, added, removed }]);
