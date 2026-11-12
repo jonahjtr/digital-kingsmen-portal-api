@@ -172,6 +172,27 @@ describe('Tickets', () => {
     expect(none.body.data.assignee).toBeNull();
   });
 
+  it('authors can edit their own messages; history keeps the original', async () => {
+    const evs = (await request(app).get(`/api/tickets/${ticketId}/events`).set(as(client))).body.data;
+    const mine = evs.find((e: { kind: string; actor: { isStaff: boolean } }) => e.kind === 'created');
+    const staffMsg = evs.find((e: { kind: string; actor: { isStaff: boolean } }) => e.kind === 'reply' && e.actor?.isStaff);
+    const original = mine.body;
+    // Can't edit someone else's message.
+    expect((await request(app).patch(`/api/tickets/events/${staffMsg.id}`).set(as(client)).send({ body: 'hacked' })).status).toBe(403);
+    expect((await request(app).patch(`/api/tickets/events/${mine.id}`).set(as(client)).send({ body: 'v2' })).status).toBe(200);
+    expect((await request(app).patch(`/api/tickets/events/${mine.id}`).set(as(client)).send({ body: 'v3' })).status).toBe(200);
+    const after = (await request(app).get(`/api/tickets/${ticketId}/events`).set(as(client))).body.data.find((e: { id: string }) => e.id === mine.id);
+    expect(after.body).toBe('v3');
+    expect(after.editedAt).toBeTruthy();
+    expect(after.revisionCount).toBe(2);
+    const hist = (await request(app).get(`/api/tickets/events/${mine.id}/revisions`).set(as(client))).body.data;
+    expect(hist.map((h: { body: string }) => h.body)).toEqual([original, 'v2', 'v3']);
+    expect(hist[2].current).toBe(true);
+    // Clients can't read internal note history.
+    const note = evs.find((e: { internal: boolean }) => e.internal);
+    if (note) expect((await request(app).get(`/api/tickets/events/${note.id}/revisions`).set(as(client))).status).toBe(404);
+  });
+
   it('pm only sees tickets for companies they can access', async () => {
     const r = await request(app).get('/api/tickets?status=active').set(as(pm));
     expect(r.status).toBe(200);

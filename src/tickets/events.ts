@@ -13,7 +13,8 @@ export type TicketEventKind =
   | 'status_changed'
   | 'priority_changed'
   | 'assigned'
-  | 'category_changed';
+  | 'category_changed'
+  | 'edited';
 
 export type TicketBusEvent = {
   kind: TicketEventKind;

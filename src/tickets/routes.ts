@@ -138,6 +138,17 @@ router.post(
 );
 
 router.patch(
+  '/events/:eventId',
+  h(async (req, res) => {
+    const b = z.object({ body: z.string().max(20000) }).parse(req.body);
+    await svc.editEvent(req.user!, getParam(req, 'eventId'), b.body);
+    return success(res, { ok: true });
+  }),
+);
+
+router.get('/events/:eventId/revisions', h(async (req, res) => success(res, await svc.eventRevisions(req.user!, getParam(req, 'eventId')))));
+
+router.patch(
   '/events/:eventId/checklist',
   h(async (req, res) => {
     const b = z.object({ line: z.number().int().min(0).max(500), checked: z.boolean() }).parse(req.body);
