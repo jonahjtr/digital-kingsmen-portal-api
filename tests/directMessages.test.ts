@@ -73,6 +73,42 @@ describe('Direct messages', () => {
     expect(row.lastMessagePreview ?? '').not.toContain('SECRET');
   });
 
+  it('voice memo: plays inline as audio and shows a voice preview in the inbox', async () => {
+    const up = await request(app)
+      .post('/api/files/upload')
+      .set(as(admin))
+      .field('category', 'other')
+      .attach('file', Buffer.from('OggS fake audio'), { filename: 'voice-memo.ogg', contentType: 'audio/ogg' });
+    expect(up.status).toBe(201);
+    const sent = await request(app)
+      .post(`/api/conversations/${dmId}/messages`)
+      .set(as(admin))
+      .send({ attachment_file_id: up.body.data.id });
+    expect(sent.status).toBe(201);
+    const file = await request(app).get(`/api/messages/${sent.body.data.id}/attachment`).set(as(client));
+    expect(file.status).toBe(200);
+    expect(file.headers['content-type']).toMatch(/^audio\/ogg/);
+    expect(file.headers['content-disposition']).toMatch(/^inline/);
+    const row = ((await request(app).get('/api/conversations').set(as(client))).body.data as Array<{ id: string; lastMessagePreview: string }>).find((c) => c.id === dmId)!;
+    expect(row.lastMessagePreview).toBe('🎤 Voice memo');
+  });
+
+  it('edits keep the original, visible to the other member; deleting wipes history', async () => {
+    const m = await request(app).post(`/api/conversations/${dmId}/messages`).set(as(admin)).send({ message: 'v1 original' });
+    const id = m.body.data.id;
+    await request(app).patch(`/api/messages/${id}`).set(as(admin)).send({ message: 'v2' });
+    await request(app).patch(`/api/messages/${id}`).set(as(admin)).send({ message: 'v3 final' });
+    expect((await request(app).patch(`/api/messages/${id}`).set(as(client)).send({ message: 'hack' })).status).toBe(403);
+    const h = await request(app).get(`/api/messages/${id}/edits`).set(as(client));
+    expect(h.status).toBe(200);
+    expect(h.body.data.original).toBe('v1 original');
+    expect(h.body.data.versions.map((v: { text: string }) => v.text)).toEqual(['v1 original', 'v2', 'v3 final']);
+    expect((await request(app).get(`/api/messages/${id}/edits`).set(as(pm))).status).toBe(404);
+    await request(app).delete(`/api/messages/${id}`).set(as(admin));
+    expect((await request(app).get(`/api/messages/${id}/edits`).set(as(client))).status).toBe(404);
+    expect(await prisma.messageEdit.count({ where: { messageId: id } })).toBe(0);
+  });
+
   it('a third person cannot see or post in the DM', async () => {
     const list = await request(app).get('/api/conversations').set(as(pm));
     expect((list.body.data as Array<{ id: string }>).some((c) => c.id === dmId)).toBe(false);
