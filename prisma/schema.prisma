@@ -88,6 +88,7 @@ enum ConversationType {
   internal_project
   admin_salesman
   admin_employee
+  direct
 }
 
 enum FileCategory {

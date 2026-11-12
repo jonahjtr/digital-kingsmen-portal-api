@@ -5,6 +5,7 @@ const TYPE_LABELS: Record<string, string> = {
   internal_project: 'Internal project',
   admin_salesman: 'Admin ↔ Sales',
   admin_employee: 'Admin ↔ Team',
+  direct: 'Direct message',
 };
 
 type ConversationWithRelations = Conversation & {

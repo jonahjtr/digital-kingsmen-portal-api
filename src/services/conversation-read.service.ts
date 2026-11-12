@@ -4,6 +4,11 @@ import { messageInternalFilter } from '../permissions/filters';
 
 const EPOCH = new Date(0);
 
+/** Conversation types a client login may read/post in (still membership-gated). */
+export function clientCanSee(type: ConversationType | string): boolean {
+  return type === 'client_project' || type === 'direct';
+}
+
 export function conversationTitle(
   type: ConversationType,
   projectName?: string | null,
@@ -14,6 +19,7 @@ export function conversationTitle(
   if (type === 'internal_project') return 'Internal project';
   if (type === 'admin_salesman') return 'Admin ↔ Sales';
   if (type === 'admin_employee') return 'Admin ↔ Team';
+  if (type === 'direct') return 'Direct message';
   return 'Conversation';
 }
 
@@ -42,7 +48,7 @@ export async function totalUnreadForUser(user: User): Promise<number> {
 
   const eligible =
     user.role === 'client'
-      ? memberships.filter((m) => m.conversation.type === 'client_project')
+      ? memberships.filter((m) => clientCanSee(m.conversation.type))
       : memberships;
 
   let total = 0;
@@ -110,6 +116,14 @@ export async function mapConversationWithUnread(
   lastReadAt: Date | null,
 ): Promise<Record<string, unknown>> {
   const last = conversation.messages[0];
+  // ponytail: one extra query per DM row; fine at DK scale, batch it if the inbox gets big.
+  const other =
+    conversation.type === 'direct'
+      ? await prisma.conversationMember.findFirst({
+          where: { conversationId: conversation.id, userId: { not: user.id } },
+          select: { user: { select: { id: true, fullName: true } } },
+        })
+      : null;
   const unreadCount = await countUnreadForMember(
     conversation.id,
     user.id,
@@ -121,11 +135,10 @@ export async function mapConversationWithUnread(
     id: conversation.id,
     type: conversation.type,
     updatedAt: conversation.updatedAt,
-    title: conversationTitle(
-      conversation.type,
-      conversation.project?.name,
-      conversation.company?.name,
-    ),
+    title: other
+      ? other.user.fullName
+      : conversationTitle(conversation.type, conversation.project?.name, conversation.company?.name),
+    directUserId: other?.user.id ?? null,
     projectName: conversation.project?.name ?? null,
     companyName: conversation.company?.name ?? null,
     project: conversation.project,
@@ -133,7 +146,8 @@ export async function mapConversationWithUnread(
     lastMessageAt: last?.createdAt ?? conversation.updatedAt,
     lastMessagePreview: last?.message?.slice(0, 120) ?? null,
     unreadCount,
-    isInternal: conversation.type !== 'client_project',
+    isInternal: conversation.type !== 'client_project' && conversation.type !== 'direct',
+    isDirect: conversation.type === 'direct',
   };
 }
 
@@ -145,7 +159,7 @@ export async function recentConversationsForUser(
     user.role === 'client'
       ? {
           members: { some: { userId: user.id } },
-          type: 'client_project' as const,
+          type: { in: ['client_project', 'direct'] as ConversationType[] },
         }
       : { members: { some: { userId: user.id } } };
 
@@ -156,7 +170,7 @@ export async function recentConversationsForUser(
     include: {
       project: { select: { id: true, name: true } },
       company: { select: { id: true, name: true } },
-      messages: { take: 1, orderBy: { createdAt: 'desc' } },
+      messages: { where: messageInternalFilter(user), take: 1, orderBy: { createdAt: 'desc' } },
       members: { where: { userId: user.id }, take: 1 },
     },
   });
