@@ -147,6 +147,31 @@ describe('Tickets', () => {
     expect(cn.some((x) => x.title.includes('replied'))).toBe(true);
   });
 
+  it('supports multiple assignees: lead = first, all show up in Mine, all notified, legacy assignee_id resets', async () => {
+    const staff = await prisma.user.findMany({ where: { role: { not: 'client' }, isActive: true }, take: 3, orderBy: { email: 'asc' } });
+    const ids = staff.map((s) => s.id);
+    const r = await request(app).patch(`/api/tickets/${ticketId}`).set(as(admin)).send({ assignee_ids: ids });
+    expect(r.status).toBe(200);
+    expect(r.body.data.assignees.map((a: { id: string }) => a.id)).toEqual(ids);
+    expect(r.body.data.assignees[0].email).toBeTruthy();
+    expect(r.body.data.assignee.id).toBe(ids[0]);
+    // A non-lead co-assignee sees it in "mine" and got notified.
+    const co = staff[2];
+    const mine = await prisma.ticket.count({ where: { id: ticketId, OR: [{ assigneeId: co.id }, { assignees: { some: { userId: co.id } } }] } });
+    expect(mine).toBe(1);
+    const filtered = await request(app).get(`/api/tickets?assignee=${co.id}&status=active`).set(as(admin));
+    expect(filtered.body.data.some((t: { id: string }) => t.id === ticketId)).toBe(true);
+    // Client can't pass a client id in the list.
+    const clientUser = await prisma.user.findUniqueOrThrow({ where: { email: 'client-pure@example.com' } });
+    expect((await request(app).patch(`/api/tickets/${ticketId}`).set(as(admin)).send({ assignee_ids: [ids[0], clientUser.id] })).status).toBe(400);
+    // Legacy single assign replaces the whole list; null clears it.
+    const one = await request(app).patch(`/api/tickets/${ticketId}`).set(as(admin)).send({ assignee_id: ids[1] });
+    expect(one.body.data.assignees.map((a: { id: string }) => a.id)).toEqual([ids[1]]);
+    const none = await request(app).patch(`/api/tickets/${ticketId}`).set(as(admin)).send({ assignee_ids: [] });
+    expect(none.body.data.assignees).toEqual([]);
+    expect(none.body.data.assignee).toBeNull();
+  });
+
   it('pm only sees tickets for companies they can access', async () => {
     const r = await request(app).get('/api/tickets?status=active').set(as(pm));
     expect(r.status).toBe(200);

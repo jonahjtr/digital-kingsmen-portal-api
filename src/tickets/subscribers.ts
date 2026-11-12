@@ -10,8 +10,14 @@ import { TICKET_STATUSES } from './config';
 
 const label = (s: unknown) => TICKET_STATUSES.find((x) => x.key === s)?.label ?? String(s);
 
-async function staffWatchers(ticket: { companyId: string; assigneeId: string | null }) {
-  if (ticket.assigneeId) return [ticket.assigneeId];
+async function assigneeIds(ticketId: string) {
+  return (await prisma.ticketAssignee.findMany({ where: { ticketId }, select: { userId: true } })).map((a) => a.userId);
+}
+
+async function staffWatchers(ticket: { id: string; companyId: string; assigneeId: string | null }) {
+  const ids = await assigneeIds(ticket.id);
+  if (ticket.assigneeId && !ids.includes(ticket.assigneeId)) ids.push(ticket.assigneeId);
+  if (ids.length) return ids;
   // Unassigned → admins + the client's PM so nothing falls through the cracks.
   const [admins, company] = await Promise.all([
     prisma.user.findMany({ where: { role: 'admin', isActive: true }, select: { id: true } }),
@@ -44,7 +50,10 @@ export function registerTicketSubscribers() {
       case 'note':
         return notifyExcept(await staffWatchers(t), `Note on ${tag}`, `${e.actor?.fullName}: ${e.body ?? ''}`);
       case 'assigned':
-        if (t.assigneeId) return notifyExcept([t.assigneeId], `Assigned to you: ${tag}`, t.title);
+        {
+          const added = Array.isArray(e.data?.added) ? (e.data.added as string[]) : t.assigneeId ? [t.assigneeId] : [];
+          if (added.length) return notifyExcept(added, `Assigned to you: ${tag}`, t.title);
+        }
         return;
       case 'status_changed':
         if (e.internal) return;

@@ -42,11 +42,15 @@ export async function getTicketForUser(user: User, idOrNumber: string) {
   return ticket;
 }
 
+const assignedTo = (id: string): Prisma.TicketWhereInput => ({ OR: [{ assigneeId: id }, { assignees: { some: { userId: id } } }] });
+const unassignedWhere: Prisma.TicketWhereInput = { assigneeId: null, assignees: { none: {} } };
+
 export const ticketInclude = {
   company: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   requester: { select: { id: true, fullName: true } },
   assignee: { select: { id: true, fullName: true } },
+  assignees: { orderBy: { createdAt: 'asc' }, select: { user: { select: { id: true, fullName: true, email: true } } } },
 } as const;
 
 type TicketWithRefs = Prisma.TicketGetPayload<{ include: typeof ticketInclude }>;
@@ -66,6 +70,7 @@ export function presentTicket(t: TicketWithRefs, viewer: Actor) {
     project: t.project,
     requester: t.requester,
     assignee: t.assignee,
+    assignees: t.assignees.map((a) => a.user),
     source: t.source,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
@@ -115,7 +120,7 @@ export async function listTickets(user: User, f: TicketListFilters) {
   if (f.category) and.push({ category: f.category });
   if (f.companyId) and.push({ companyId: f.companyId });
   if (isStaff(user) && f.assigneeId) {
-    and.push({ assigneeId: f.assigneeId === 'me' ? user.id : f.assigneeId === 'none' ? null : f.assigneeId });
+    and.push(f.assigneeId === 'none' ? unassignedWhere : assignedTo(f.assigneeId === 'me' ? user.id : f.assigneeId));
   }
   if (f.q) {
     const q = f.q.trim();
@@ -163,8 +168,8 @@ export async function ticketCounts(user: User) {
   const now = new Date();
   const [all, mine, unassigned, breached] = await Promise.all([
     prisma.ticket.count({ where: active }),
-    prisma.ticket.count({ where: { AND: [active, { assigneeId: user.id }] } }),
-    prisma.ticket.count({ where: { AND: [active, { assigneeId: null }] } }),
+    prisma.ticket.count({ where: { AND: [active, assignedTo(user.id)] } }),
+    prisma.ticket.count({ where: { AND: [active, unassignedWhere] } }),
     prisma.ticket.count({
       where: {
         AND: [
@@ -250,6 +255,7 @@ export async function createTicket(
     }
   }
   if (!ticket) throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Could not number ticket', 500);
+  if (assigneeId) await prisma.ticketAssignee.create({ data: { ticketId: ticket.id, userId: assigneeId } });
 
   const ev = await prisma.ticketEvent.create({
     data: { ticketId: ticket.id, actorId: user.id, kind: 'created', body: input.body.trim(), attachmentFileId },
@@ -354,7 +360,7 @@ export async function addComment(
 export async function updateTicket(
   user: User,
   ticketId: string,
-  input: { status?: string; priority?: string; assigneeId?: string | null; category?: string; title?: string; customFields?: Record<string, unknown> },
+  input: { status?: string; priority?: string; assigneeId?: string | null; assigneeIds?: string[]; category?: string; title?: string; customFields?: Record<string, unknown> },
 ) {
   const t = await getTicketForUser(user, ticketId);
   if (!isStaff(user)) {
@@ -386,9 +392,22 @@ export async function updateTicket(
     data.resolutionDueAt = new Date(t.createdAt.getTime() + p.resolutionHours * HOUR);
     changes.push(['priority_changed', { from: t.priority, to: input.priority }]);
   }
-  if (input.assigneeId !== undefined && input.assigneeId !== t.assigneeId) {
-    data.assigneeId = input.assigneeId ? await assertAssignable(input.assigneeId) : null;
-    changes.push(['assigned', { from: t.assigneeId, to: input.assigneeId }]);
+  // assigneeIds = full list (first = lead). Legacy assigneeId = "just this one person" (or null = nobody).
+  const nextIds =
+    input.assigneeIds !== undefined ? [...new Set(input.assigneeIds)] : input.assigneeId !== undefined ? (input.assigneeId ? [input.assigneeId] : []) : null;
+  let assigneesChanged = false;
+  if (nextIds) {
+    const prev = t.assignees.map((a) => a.user.id);
+    const added = nextIds.filter((id) => !prev.includes(id));
+    const removed = prev.filter((id) => !nextIds.includes(id));
+    if (added.length || removed.length || (nextIds[0] ?? null) !== t.assigneeId) {
+      for (const id of added) await assertAssignable(id);
+      await prisma.ticketAssignee.deleteMany({ where: { ticketId: t.id, userId: { in: removed } } });
+      for (const id of added) await prisma.ticketAssignee.create({ data: { ticketId: t.id, userId: id } });
+      data.assigneeId = nextIds[0] ?? null;
+      assigneesChanged = true;
+      changes.push(['assigned', { from: t.assigneeId, to: nextIds[0] ?? null, added, removed }]);
+    }
   }
   if (input.category && input.category !== t.category) {
     data.category = input.category;
@@ -396,7 +415,7 @@ export async function updateTicket(
   }
   if (input.title && input.title.trim() !== t.title) data.title = input.title.trim();
   if (input.customFields) data.customFields = JSON.stringify({ ...safeJson(t.customFields), ...input.customFields });
-  if (!Object.keys(data).length) return t;
+  if (!Object.keys(data).length && !assigneesChanged) return t;
 
   data.lastActivityAt = now;
   const updated = await prisma.ticket.update({ where: { id: t.id }, data });
