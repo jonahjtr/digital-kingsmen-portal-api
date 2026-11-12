@@ -473,6 +473,39 @@ export async function listMessageEdits(req: Request, res: Response, next: NextFu
   }
 }
 
+/** ADMIN ONLY: what a deleted message said (every version, last = text at deletion) + its attachment. */
+export async function getDeletedMessage(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (req.user!.role !== 'admin') throw new AppError(ErrorCodes.NOT_FOUND, 'Message not found', 404);
+    const msg = await prisma.message.findFirst({
+      where: {
+        id: getParam(req, 'id'),
+        deletedAt: { not: null },
+        conversation: { members: { some: { userId: req.user!.id } } },
+      },
+      select: {
+        createdAt: true,
+        deletedAt: true,
+        sender: { select: { fullName: true } },
+        attachment: { select: { id: true, fileName: true, fileType: true, fileSize: true } },
+        edits: { orderBy: { editedAt: 'asc' }, select: { previousMessage: true, editedAt: true } },
+      },
+    });
+    if (!msg) throw new AppError(ErrorCodes.NOT_FOUND, 'Message not found', 404);
+    return success(res, {
+      sender: msg.sender.fullName,
+      deletedAt: msg.deletedAt,
+      attachment: msg.attachment,
+      versions: msg.edits.map((e, i) => ({
+        text: e.previousMessage,
+        at: i === 0 ? msg.createdAt : msg.edits[i - 1].editedAt,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 /** Delete (soft) your own message; admins can delete anyone's. Leaves a "deleted" placeholder. */
 export async function deleteMessage(req: Request, res: Response, next: NextFunction) {
   try {
@@ -480,11 +513,14 @@ export async function deleteMessage(req: Request, res: Response, next: NextFunct
     if (msg.senderId !== req.user!.id && req.user!.role !== 'admin') {
       throw new AppError(ErrorCodes.FORBIDDEN, 'You can only delete your own messages', 403);
     }
+    const current = await prisma.message.findUniqueOrThrow({ where: { id: msg.id }, select: { message: true } });
+    // Blank the live text (nobody sees it in the thread), but archive the final text as the last
+    // version so admins can review what was deleted. Edit history is kept for the same reason.
     await prisma.$transaction([
+      prisma.messageEdit.create({ data: { messageId: msg.id, previousMessage: current.message } }),
       prisma.message.update({ where: { id: msg.id }, data: { deletedAt: new Date(), message: '' } }),
       prisma.messageReaction.deleteMany({ where: { messageId: msg.id } }),
       prisma.messageMention.deleteMany({ where: { messageId: msg.id } }),
-      prisma.messageEdit.deleteMany({ where: { messageId: msg.id } }),
     ]);
     const mapped = await broadcastMessageUpdate(msg.conversationId, msg.id, msg.internalOnly);
     return success(res, mapped);
@@ -549,7 +585,8 @@ export async function messageAttachment(req: Request, res: Response, next: NextF
     const msg = await prisma.message.findFirst({
       where: {
         id: getParam(req, 'id'),
-        deletedAt: null,
+        // Deleted attachments stay reviewable by admins only.
+        ...(req.user!.role === 'admin' ? {} : { deletedAt: null }),
         conversation: { members: { some: { userId: req.user!.id } } },
         ...messageInternalFilter(req.user!),
       },
