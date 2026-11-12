@@ -135,6 +135,14 @@ router.post(
   }),
 );
 
+router.patch(
+  '/events/:eventId/checklist',
+  h(async (req, res) => {
+    const b = z.object({ line: z.number().int().min(0).max(500), checked: z.boolean() }).parse(req.body);
+    return success(res, await svc.toggleChecklist(req.user!, getParam(req, 'eventId'), b.line, b.checked));
+  }),
+);
+
 router.get(
   '/events/:eventId/attachment',
   h(async (req, res) => {
